@@ -1,4 +1,4 @@
-package mylang.ast;
+package net.villagerzock.compiler.ast;
 
-public sealed interface Node permits mylang.ast.decl.Declaration, mylang.ast.expr.Expression, mylang.ast.stmt.Statement {
+public interface Node {
 }

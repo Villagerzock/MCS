@@ -1,5 +1,6 @@
 plugins {
     id("java")
+    id("antlr")
 }
 
 group = "net.villagerzock"
@@ -10,11 +11,10 @@ repositories {
 }
 
 dependencies {
-    testImplementation(platform("org.junit:junit-bom:5.10.0"))
-    testImplementation("org.junit.jupiter:junit-jupiter")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    antlr("org.antlr:antlr4:4.13.1")
+    implementation("org.antlr:antlr4-runtime:4.13.1")
 }
 
-tasks.test {
-    useJUnitPlatform()
+tasks.generateGrammarSource {
+    arguments = arguments + listOf("-visitor", "-long-messages")
 }

@@ -1,6 +1,6 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.Node;
+import net.villagerzock.compiler.ast.Node;
 
-public sealed interface Expression extends Node permits AssignmentExpression, BinaryExpression, UnaryExpression, IdentifierExpression, NumberLiteralExpression, StringLiteralExpression, BooleanLiteralExpression, GroupExpression, CallExpression, MemberAccessExpression {
+public interface Expression extends Node {
 }

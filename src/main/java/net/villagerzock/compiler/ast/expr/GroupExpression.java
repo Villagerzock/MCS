@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class GroupExpression extends AstNode implements Expression {
 	private final Expression expression;
@@ -17,5 +17,11 @@ public final class GroupExpression extends AstNode implements Expression {
 
 	public Expression expression() {
 		return expression;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Group";
 	}
 }

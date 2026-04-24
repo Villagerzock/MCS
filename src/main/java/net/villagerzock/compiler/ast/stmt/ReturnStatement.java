@@ -1,8 +1,8 @@
-package mylang.ast.stmt;
+package net.villagerzock.compiler.ast.stmt;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
-import mylang.ast.expr.Expression;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.ast.expr.Expression;
 
 public final class ReturnStatement extends AstNode implements Statement {
 	private final Expression value;
@@ -18,5 +18,11 @@ public final class ReturnStatement extends AstNode implements Statement {
 
 	public Expression value() {
 		return value;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Return";
 	}
 }

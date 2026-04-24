@@ -1,4 +1,4 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
 public enum BinaryOperator {
 	ADD,

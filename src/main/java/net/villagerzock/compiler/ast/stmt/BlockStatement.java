@@ -1,7 +1,7 @@
-package mylang.ast.stmt;
+package net.villagerzock.compiler.ast.stmt;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 import java.util.List;
 
@@ -19,5 +19,11 @@ public final class BlockStatement extends AstNode implements Statement {
 
 	public List<Statement> statements() {
 		return statements;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Block";
 	}
 }

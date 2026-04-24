@@ -1,7 +1,7 @@
-package mylang.ast.type;
+package net.villagerzock.compiler.ast.type;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class TypeNode extends AstNode {
 	private final String name;
@@ -17,5 +17,11 @@ public final class TypeNode extends AstNode {
 
 	public String name() {
 		return name;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Type(" + name() + ")";
 	}
 }

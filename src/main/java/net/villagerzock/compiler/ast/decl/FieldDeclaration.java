@@ -1,9 +1,9 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
-import mylang.ast.expr.Expression;
-import mylang.ast.type.TypeNode;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.ast.expr.Expression;
+import net.villagerzock.compiler.ast.type.TypeNode;
 
 public final class FieldDeclaration extends AstNode implements Declaration {
 	private final TypeNode type;
@@ -31,5 +31,11 @@ public final class FieldDeclaration extends AstNode implements Declaration {
 
 	public Expression initializer() {
 		return initializer;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Field(" + name() + ")";
 	}
 }

@@ -1,8 +1,8 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
-import mylang.ast.type.TypeNode;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.ast.type.TypeNode;
 
 public final class ParameterDeclaration extends AstNode implements Declaration {
 	private final TypeNode type;
@@ -24,5 +24,11 @@ public final class ParameterDeclaration extends AstNode implements Declaration {
 
 	public String name() {
 		return name;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Parameter(" + name() + ")";
 	}
 }

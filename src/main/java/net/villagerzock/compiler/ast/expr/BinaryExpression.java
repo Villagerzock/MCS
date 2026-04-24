@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class BinaryExpression extends AstNode implements Expression {
 	private final Expression left;
@@ -29,5 +29,11 @@ public final class BinaryExpression extends AstNode implements Expression {
 
 	public Expression right() {
 		return right;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Binary(" + operator().name() + ")";
 	}
 }

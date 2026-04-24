@@ -1,6 +1,6 @@
-package mylang.ast.stmt;
+package net.villagerzock.compiler.ast.stmt;
 
-import mylang.ast.Node;
+import net.villagerzock.compiler.ast.Node;
 
-public sealed interface Statement extends Node permits BlockStatement, IfStatement, ReturnStatement, VariableDeclarationStatement, ExpressionStatement {
+public interface Statement extends Node {
 }

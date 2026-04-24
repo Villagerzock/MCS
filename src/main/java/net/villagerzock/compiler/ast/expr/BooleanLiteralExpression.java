@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class BooleanLiteralExpression extends AstNode implements Expression {
 	private final boolean value;
@@ -17,5 +17,11 @@ public final class BooleanLiteralExpression extends AstNode implements Expressio
 
 	public boolean value() {
 		return value;
+	}
+
+
+	@Override
+	public String getString() {
+		return "BooleanLiteral(" + value() + ")";
 	}
 }

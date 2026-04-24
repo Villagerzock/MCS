@@ -1,5 +1,9 @@
 grammar MCS;
 
+@header {
+	package net.villagerzock.compiler.parser;
+}
+
 program
 	: packageDecl? importDecl* classDecl* EOF
 	;

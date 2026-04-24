@@ -1,9 +1,9 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
-import mylang.ast.stmt.BlockStatement;
-import mylang.ast.type.TypeNode;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.ast.stmt.BlockStatement;
+import net.villagerzock.compiler.ast.type.TypeNode;
 
 import java.util.List;
 
@@ -39,5 +39,11 @@ public final class MethodDeclaration extends AstNode implements Declaration {
 
 	public BlockStatement body() {
 		return body;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Method(" + name() + ")";
 	}
 }

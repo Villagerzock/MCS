@@ -1,6 +1,6 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.Node;
+import net.villagerzock.compiler.ast.Node;
 
-public sealed interface Declaration extends Node permits ProgramNode, ClassDeclaration, FieldDeclaration, MethodDeclaration, ParameterDeclaration {
+public interface Declaration extends Node {
 }

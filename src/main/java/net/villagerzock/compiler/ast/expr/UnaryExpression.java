@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class UnaryExpression extends AstNode implements Expression {
 	private final UnaryOperator operator;
@@ -23,5 +23,11 @@ public final class UnaryExpression extends AstNode implements Expression {
 
 	public Expression operand() {
 		return operand;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Unary(" + operator().name() + ")";
 	}
 }

@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 import java.util.List;
 
@@ -25,5 +25,11 @@ public final class CallExpression extends AstNode implements Expression {
 
 	public List<Expression> arguments() {
 		return arguments;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Call";
 	}
 }

@@ -1,7 +1,7 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 import java.util.List;
 
@@ -25,5 +25,11 @@ public final class ClassDeclaration extends AstNode implements Declaration {
 
 	public List<Declaration> members() {
 		return members;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Class(" + name() + ")";
 	}
 }

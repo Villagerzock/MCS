@@ -1,7 +1,7 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class ImportDeclaration extends AstNode {
 	private final QualifiedPathNode path;
@@ -17,5 +17,11 @@ public final class ImportDeclaration extends AstNode {
 
 	public QualifiedPathNode path() {
 		return path;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Import";
 	}
 }

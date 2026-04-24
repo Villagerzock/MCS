@@ -1,7 +1,7 @@
-package mylang.ast.decl;
+package net.villagerzock.compiler.ast.decl;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 import java.util.List;
 
@@ -29,5 +29,11 @@ public final class QualifiedPathNode extends AstNode {
 
 	public String asImportString() {
 		return namespace + ":" + String.join("/", segments);
+	}
+
+
+	@Override
+	public String getString() {
+		return "Path(" + asImportString() + ")";
 	}
 }

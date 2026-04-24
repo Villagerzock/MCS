@@ -1,7 +1,7 @@
-package mylang.ast.expr;
+package net.villagerzock.compiler.ast.expr;
 
-import mylang.ast.AstNode;
-import mylang.ast.SourceRange;
+import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.SourceRange;
 
 public final class AssignmentExpression extends AstNode implements Expression {
 	private final Expression target;
@@ -23,5 +23,11 @@ public final class AssignmentExpression extends AstNode implements Expression {
 
 	public Expression value() {
 		return value;
+	}
+
+
+	@Override
+	public String getString() {
+		return "Assignment";
 	}
 }
