@@ -1,6 +1,4 @@
-package namespace:pfad // Der pfad an dem die Datei Liegt, kann der Compiler nutzen um zu wissen ob eine andere File schon importet ist oder nicht alle files im gleichen dir sind automatisch drin
-
-import namespace:pfad // Der pfad eines scripts welches importet wird
+package example:test // Der pfad an dem die Datei Liegt, kann der Compiler nutzen um zu wissen ob eine andere File schon importet ist oder nicht alle files im gleichen dir sind automatisch drin
 
 class Main {
     // In jeder methode gibt es Reserved Parameter diese wären: this, target, location. this steht für das objekt in welchem die methode ist, target ist die entity die ausführt z.b. der Spieler der die Function ausführt

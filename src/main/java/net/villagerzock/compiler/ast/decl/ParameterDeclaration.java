@@ -2,9 +2,11 @@ package net.villagerzock.compiler.ast.decl;
 
 import net.villagerzock.compiler.ast.AstNode;
 import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.semantic.Symbol;
 import net.villagerzock.compiler.ast.type.TypeNode;
 
 public final class ParameterDeclaration extends AstNode implements Declaration {
+	private Symbol resolvedSymbol;
 	private final TypeNode type;
 	private final String name;
 
@@ -26,6 +28,14 @@ public final class ParameterDeclaration extends AstNode implements Declaration {
 		return name;
 	}
 
+
+	public Symbol resolvedSymbol() {
+		return resolvedSymbol;
+	}
+
+	public void setResolvedSymbol(Symbol resolvedSymbol) {
+		this.resolvedSymbol = resolvedSymbol;
+	}
 
 	@Override
 	public String getString() {

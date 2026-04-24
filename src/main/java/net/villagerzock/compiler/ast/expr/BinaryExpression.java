@@ -2,8 +2,10 @@ package net.villagerzock.compiler.ast.expr;
 
 import net.villagerzock.compiler.ast.AstNode;
 import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.semantic.SemanticType;
 
 public final class BinaryExpression extends AstNode implements Expression {
+	private SemanticType resolvedType;
 	private final Expression left;
 	private final BinaryOperator operator;
 	private final Expression right;
@@ -31,6 +33,14 @@ public final class BinaryExpression extends AstNode implements Expression {
 		return right;
 	}
 
+
+	public SemanticType resolvedType() {
+		return resolvedType;
+	}
+
+	public void setResolvedType(SemanticType resolvedType) {
+		this.resolvedType = resolvedType;
+	}
 
 	@Override
 	public String getString() {

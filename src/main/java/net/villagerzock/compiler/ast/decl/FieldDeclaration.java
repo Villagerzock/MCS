@@ -2,10 +2,12 @@ package net.villagerzock.compiler.ast.decl;
 
 import net.villagerzock.compiler.ast.AstNode;
 import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.semantic.Symbol;
 import net.villagerzock.compiler.ast.expr.Expression;
 import net.villagerzock.compiler.ast.type.TypeNode;
 
 public final class FieldDeclaration extends AstNode implements Declaration {
+	private Symbol resolvedSymbol;
 	private final TypeNode type;
 	private final String name;
 	private final Expression initializer;
@@ -33,6 +35,14 @@ public final class FieldDeclaration extends AstNode implements Declaration {
 		return initializer;
 	}
 
+
+	public Symbol resolvedSymbol() {
+		return resolvedSymbol;
+	}
+
+	public void setResolvedSymbol(Symbol resolvedSymbol) {
+		this.resolvedSymbol = resolvedSymbol;
+	}
 
 	@Override
 	public String getString() {

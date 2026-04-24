@@ -1,0 +1,8 @@
+package std:std
+
+class Std {
+    native function print(string s) {
+tellraw @a {nbt:"stack[0].locals.s",storage:"%1$s:memory"}
+    }
+
+}

@@ -30,6 +30,9 @@ public final class QualifiedPathNode extends AstNode {
 	public String asImportString() {
 		return namespace + ":" + String.join("/", segments);
 	}
+	public String path(){
+		return String.join("/",segments);
+	}
 
 
 	@Override

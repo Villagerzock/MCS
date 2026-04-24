@@ -16,5 +16,22 @@ dependencies {
 }
 
 tasks.generateGrammarSource {
-    arguments = arguments + listOf("-visitor", "-long-messages")
+    outputDirectory = file("$buildDir/generated-src/antlr/main/net/villagerzock/compiler/parser")
+
+    arguments = arguments + listOf(
+        "-visitor",
+        "-package", "net.villagerzock.compiler.parser"
+    )
+}
+tasks.register<Exec>("runScript") {
+    commandLine("bash", "run.sh")
+}
+tasks.register<JavaExec>("runMain") {
+    group = "application"
+    description = "Runs the main class"
+
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("net.villagerzock.Main") // <- deine Main Klasse
+
+    dependsOn("runScript")
 }

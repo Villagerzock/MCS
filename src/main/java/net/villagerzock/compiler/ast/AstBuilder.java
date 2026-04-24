@@ -1,18 +1,19 @@
 package net.villagerzock.compiler.ast;
 
-import net.villagerzock.compiler.ast.Node;
 import net.villagerzock.compiler.ast.decl.*;
 import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.*;
 import net.villagerzock.compiler.ast.type.TypeNode;
-import net.villagerzock.compiler.parser.MCSBaseVisitor;
 import net.villagerzock.compiler.parser.MCSParser;
-import org.antlr.v4.runtime.tree.TerminalNode;
+import net.villagerzock.compiler.parser.MCSParserBaseVisitor;
+import org.antlr.v4.runtime.misc.Interval;
 
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
-public class AstBuilder extends MCSBaseVisitor<Node> {
+public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
     @Override
     public Node visitProgram(MCSParser.ProgramContext ctx) {
@@ -46,10 +47,10 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
     @Override
     public Node visitQualifiedPath(MCSParser.QualifiedPathContext ctx) {
         String namespace = ctx.IDENTIFIER().getText();
-        List<String> segments = new ArrayList<>();
 
+        List<String> segments = new ArrayList<>();
         for (MCSParser.PathSegmentContext segment : ctx.pathSegment()) {
-            segments.add(segment.getText());
+            segments.add(segment.IDENTIFIER().getText());
         }
 
         return new QualifiedPathNode(namespace, segments);
@@ -58,8 +59,8 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
     @Override
     public Node visitClassDecl(MCSParser.ClassDeclContext ctx) {
         String name = ctx.IDENTIFIER().getText();
-        List<Declaration> members = new ArrayList<>();
 
+        List<Declaration> members = new ArrayList<>();
         for (MCSParser.MemberDeclContext member : ctx.classBody().memberDecl()) {
             members.add((Declaration) visit(member));
         }
@@ -72,6 +73,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
         if (ctx.fieldDecl() != null) {
             return visit(ctx.fieldDecl());
         }
+
         return visit(ctx.methodDecl());
     }
 
@@ -79,6 +81,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
     public Node visitFieldDecl(MCSParser.FieldDeclContext ctx) {
         TypeNode type = (TypeNode) visit(ctx.typeName());
         String name = ctx.IDENTIFIER().getText();
+
         Expression initializer = ctx.expression() != null
                 ? (Expression) visit(ctx.expression())
                 : null;
@@ -88,46 +91,128 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
 
     @Override
     public Node visitMethodDecl(MCSParser.MethodDeclContext ctx) {
+        if (ctx.nativeMethodDecl() != null) {
+            return visit(ctx.nativeMethodDecl());
+        }
+
+        return visit(ctx.normalMethodDecl());
+    }
+
+    @Override
+    public Node visitNormalMethodDecl(MCSParser.NormalMethodDeclContext ctx) {
         TypeNode returnType = (TypeNode) visit(ctx.returnType());
         String name = ctx.IDENTIFIER().getText();
+        List<ParameterDeclaration> parameters = visitParameters(ctx.parameterList());
+        BlockStatement body = (BlockStatement) visit(ctx.block());
 
+        return new MethodDeclaration(
+                visitMethodModifiers(ctx.methodModifier()),
+                returnType,
+                name,
+                parameters,
+                body
+        );
+    }
+
+    @Override
+    public Node visitNativeMethodDecl(MCSParser.NativeMethodDeclContext ctx) {
+        TypeNode returnType = (TypeNode) visit(ctx.returnType());
+        String name = ctx.IDENTIFIER().getText();
+        List<ParameterDeclaration> parameters = visitParameters(ctx.parameterList());
+        String nativeBody = getNativeBody(ctx.nativeBlock());
+
+        System.out.println("DEBUG NATIVE BODY = ["
+                + nativeBody
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t")
+                + "]");
+
+        return new MethodDeclaration(
+                Set.of(MethodModifier.NATIVE),
+                returnType,
+                name,
+                parameters,
+                null,
+                nativeBody
+        );
+    }
+
+    private String getNativeBody(MCSParser.NativeBlockContext ctx) {
+        int start = ctx.NATIVE_BLOCK_START().getSymbol().getStopIndex() + 1;
+        int stop = ctx.NATIVE_BLOCK_END().getSymbol().getStartIndex() - 1;
+
+        if (stop < start) {
+            return "";
+        }
+
+        return ctx.start.getInputStream().getText(Interval.of(start, stop));
+    }
+
+    private List<ParameterDeclaration> visitParameters(MCSParser.ParameterListContext ctx) {
         List<ParameterDeclaration> parameters = new ArrayList<>();
-        if (ctx.parameterList() != null) {
-            for (MCSParser.ParameterContext parameter : ctx.parameterList().parameter()) {
-                parameters.add((ParameterDeclaration) visit(parameter));
+
+        if (ctx == null) {
+            return parameters;
+        }
+
+        for (MCSParser.ParameterContext parameter : ctx.parameter()) {
+            parameters.add((ParameterDeclaration) visit(parameter));
+        }
+
+        return parameters;
+    }
+
+    private Set<MethodModifier> visitMethodModifiers(List<MCSParser.MethodModifierContext> contexts) {
+        EnumSet<MethodModifier> modifiers = EnumSet.noneOf(MethodModifier.class);
+
+        for (MCSParser.MethodModifierContext context : contexts) {
+            if (context.REPLACE() != null) {
+                modifiers.add(MethodModifier.REPLACE);
             }
         }
 
-        BlockStatement body = (BlockStatement) visit(ctx.block());
-        return new MethodDeclaration(returnType, name, parameters, body);
+        return modifiers;
+    }
+
+    private String stripOuterBraces(String text) {
+        if (text == null || text.length() < 2) {
+            return "";
+        }
+
+        return text.substring(1, text.length() - 1);
     }
 
     @Override
     public Node visitReturnType(MCSParser.ReturnTypeContext ctx) {
-        if (ctx.typeName() != null) {
-            return visit(ctx.typeName());
+        if (ctx.FUNCTION() != null) {
+            return new TypeNode("function");
         }
-        return new TypeNode("function");
+
+        return visit(ctx.typeName());
     }
 
     @Override
     public Node visitTypeName(MCSParser.TypeNameContext ctx) {
-        return new TypeNode(ctx.getText());
+        return new TypeNode(ctx.IDENTIFIER().getText());
     }
 
     @Override
     public Node visitParameter(MCSParser.ParameterContext ctx) {
         TypeNode type = (TypeNode) visit(ctx.typeName());
         String name = ctx.IDENTIFIER().getText();
+
         return new ParameterDeclaration(type, name);
     }
 
     @Override
     public Node visitBlock(MCSParser.BlockContext ctx) {
         List<Statement> statements = new ArrayList<>();
+
         for (MCSParser.StatementContext statement : ctx.statement()) {
             statements.add((Statement) visit(statement));
         }
+
         return new BlockStatement(statements);
     }
 
@@ -145,6 +230,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
         if (ctx.variableDeclStatement() != null) {
             return visit(ctx.variableDeclStatement());
         }
+
         return visit(ctx.expressionStatement());
     }
 
@@ -152,6 +238,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
     public Node visitIfStatement(MCSParser.IfStatementContext ctx) {
         Expression condition = (Expression) visit(ctx.expression());
         Statement thenBranch = (Statement) visit(ctx.statement(0));
+
         Statement elseBranch = ctx.statement().size() > 1
                 ? (Statement) visit(ctx.statement(1))
                 : null;
@@ -164,6 +251,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
         Expression value = ctx.expression() != null
                 ? (Expression) visit(ctx.expression())
                 : null;
+
         return new ReturnStatement(value);
     }
 
@@ -171,6 +259,7 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
     public Node visitVariableDeclStatement(MCSParser.VariableDeclStatementContext ctx) {
         TypeNode type = (TypeNode) visit(ctx.typeName());
         String name = ctx.IDENTIFIER().getText();
+
         Expression initializer = ctx.expression() != null
                 ? (Expression) visit(ctx.expression())
                 : null;
@@ -190,104 +279,124 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
 
     @Override
     public Node visitAssignmentExpression(MCSParser.AssignmentExpressionContext ctx) {
-        if (ctx.getChildCount() == 3 && "=".equals(ctx.getChild(1).getText())) {
+        if (ctx.postfixExpression() != null) {
             Expression target = (Expression) visit(ctx.postfixExpression());
             Expression value = (Expression) visit(ctx.assignmentExpression());
+
             return new AssignmentExpression(target, value);
         }
+
         return visit(ctx.logicalOrExpression());
     }
 
     @Override
     public Node visitLogicalOrExpression(MCSParser.LogicalOrExpressionContext ctx) {
-        Node current = visit(ctx.logicalAndExpression(0));
+        Expression current = (Expression) visit(ctx.logicalAndExpression(0));
+
         for (int i = 1; i < ctx.logicalAndExpression().size(); i++) {
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     BinaryOperator.LOGICAL_OR,
                     (Expression) visit(ctx.logicalAndExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitLogicalAndExpression(MCSParser.LogicalAndExpressionContext ctx) {
-        Node current = visit(ctx.equalityExpression(0));
+        Expression current = (Expression) visit(ctx.equalityExpression(0));
+
         for (int i = 1; i < ctx.equalityExpression().size(); i++) {
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     BinaryOperator.LOGICAL_AND,
                     (Expression) visit(ctx.equalityExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitEqualityExpression(MCSParser.EqualityExpressionContext ctx) {
-        Node current = visit(ctx.relationalExpression(0));
+        Expression current = (Expression) visit(ctx.relationalExpression(0));
+
         for (int i = 1; i < ctx.relationalExpression().size(); i++) {
             String op = ctx.getChild(i * 2 - 1).getText();
+
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     mapEqualityOperator(op),
                     (Expression) visit(ctx.relationalExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitRelationalExpression(MCSParser.RelationalExpressionContext ctx) {
-        Node current = visit(ctx.additiveExpression(0));
+        Expression current = (Expression) visit(ctx.additiveExpression(0));
+
         for (int i = 1; i < ctx.additiveExpression().size(); i++) {
             String op = ctx.getChild(i * 2 - 1).getText();
+
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     mapRelationalOperator(op),
                     (Expression) visit(ctx.additiveExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitAdditiveExpression(MCSParser.AdditiveExpressionContext ctx) {
-        Node current = visit(ctx.multiplicativeExpression(0));
+        Expression current = (Expression) visit(ctx.multiplicativeExpression(0));
+
         for (int i = 1; i < ctx.multiplicativeExpression().size(); i++) {
             String op = ctx.getChild(i * 2 - 1).getText();
+
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     mapAdditiveOperator(op),
                     (Expression) visit(ctx.multiplicativeExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitMultiplicativeExpression(MCSParser.MultiplicativeExpressionContext ctx) {
-        Node current = visit(ctx.unaryExpression(0));
+        Expression current = (Expression) visit(ctx.unaryExpression(0));
+
         for (int i = 1; i < ctx.unaryExpression().size(); i++) {
             String op = ctx.getChild(i * 2 - 1).getText();
+
             current = new BinaryExpression(
-                    (Expression) current,
+                    current,
                     mapMultiplicativeOperator(op),
                     (Expression) visit(ctx.unaryExpression(i))
             );
         }
+
         return current;
     }
 
     @Override
     public Node visitUnaryExpression(MCSParser.UnaryExpressionContext ctx) {
-        if (ctx.getChildCount() == 2) {
-            String op = ctx.getChild(0).getText();
-            Expression value = (Expression) visit(ctx.unaryExpression());
-            return new UnaryExpression(mapUnaryOperator(op), value);
+        if (ctx.postfixExpression() != null) {
+            return visit(ctx.postfixExpression());
         }
-        return visit(ctx.postfixExpression());
+
+        String op = ctx.getChild(0).getText();
+        Expression value = (Expression) visit(ctx.unaryExpression());
+
+        return new UnaryExpression(mapUnaryOperator(op), value);
     }
 
     @Override
@@ -295,15 +404,18 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
         Expression current = (Expression) visit(ctx.primaryExpression());
 
         for (MCSParser.PostfixSuffixContext suffix : ctx.postfixSuffix()) {
-            if (suffix.getChildCount() == 2 && ".".equals(suffix.getChild(0).getText())) {
+            if (suffix.DOT() != null && suffix.LPAREN() == null) {
                 current = new MemberAccessExpression(current, suffix.IDENTIFIER().getText());
-            } else if (suffix.getChild(0).getText().equals(".")) {
+            } else if (suffix.DOT() != null) {
                 current = new CallExpression(
                         new MemberAccessExpression(current, suffix.IDENTIFIER().getText()),
                         visitArguments(suffix.argumentList())
                 );
             } else {
-                current = new CallExpression(current, visitArguments(suffix.argumentList()));
+                current = new CallExpression(
+                        current,
+                        visitArguments(suffix.argumentList())
+                );
             }
         }
 
@@ -315,31 +427,40 @@ public class AstBuilder extends MCSBaseVisitor<Node> {
         if (ctx.NUMBER() != null) {
             return new NumberLiteralExpression(ctx.NUMBER().getText());
         }
+
         if (ctx.STRING() != null) {
             String raw = ctx.STRING().getText();
             raw = raw.substring(1, raw.length() - 1);
+
             return new StringLiteralExpression(raw);
         }
-        if (ctx.getText().equals("true")) {
+
+        if (ctx.TRUE() != null) {
             return new BooleanLiteralExpression(true);
         }
-        if (ctx.getText().equals("false")) {
+
+        if (ctx.FALSE() != null) {
             return new BooleanLiteralExpression(false);
         }
+
         if (ctx.IDENTIFIER() != null) {
             return new IdentifierExpression(ctx.IDENTIFIER().getText());
         }
+
         return new GroupExpression((Expression) visit(ctx.expression()));
     }
 
     private List<Expression> visitArguments(MCSParser.ArgumentListContext ctx) {
         List<Expression> arguments = new ArrayList<>();
+
         if (ctx == null) {
             return arguments;
         }
+
         for (MCSParser.ExpressionContext expression : ctx.expression()) {
             arguments.add((Expression) visit(expression));
         }
+
         return arguments;
     }
 
