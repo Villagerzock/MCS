@@ -1,5 +1,7 @@
 package net.villagerzock.mcfunction;
 
+import net.villagerzock.Main;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -8,12 +10,12 @@ public class MCFunction {
     private final String name;
     private final String namespace;
     private String finalName;
-    private List<ICommandPart> commands = new ArrayList<>();
+    private final List<ICommandPart> commands = new ArrayList<>();
 
     public MCFunction(String namespace, String path, String name) {
-        this.path = path;
-        this.name = name;
-        this.namespace = namespace;
+        this.path = toSnakeCase(Main.runtimeData.obfuscate ? "" : path);
+        this.name = toSnakeCase(Main.runtimeData.obfuscate ? "function" : name);
+        this.namespace = toSnakeCase(namespace);
     }
     public String getOriginalName(){
         return name;
@@ -37,8 +39,11 @@ public class MCFunction {
     @Override
     public String toString() {
         StringBuilder builder = new StringBuilder();
+        builder.append("# ");
+        builder.append("Compiled With MCS Compiler by Villagerzock - https://github.com/Villagerzock/MCS");
+        builder.append("\n");
         for (ICommandPart p : commands){
-            builder.append(p.apply(namespace));
+            builder.append(p.apply());
             builder.append("\n");
         }
         return builder.toString();
@@ -49,7 +54,7 @@ public class MCFunction {
     }
 
     public String getFullPath() {
-        return "%s:%s%s".formatted(namespace,path,finalName);
+        return "%s:%s%s".formatted(namespace,path,getName());
     }
 
     public String getNamespace() {
@@ -58,5 +63,33 @@ public class MCFunction {
 
     public String getOriginalFullPath() {
         return "%s:%s%s".formatted(namespace,path,name);
+    }
+
+
+    public static String toSnakeCase(String s) {
+        if (s == null || s.isEmpty()) {
+            return s;
+        }
+
+        StringBuilder result = new StringBuilder();
+
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+
+            if (Character.isUpperCase(c)) {
+                if (i > 0) {
+                    char prev = s.charAt(i - 1);
+
+                    if (Character.isLetterOrDigit(prev)) {
+                        result.append('_');
+                    }
+                }
+                result.append(Character.toLowerCase(c));
+            } else {
+                result.append(c);
+            }
+        }
+
+        return result.toString();
     }
 }

@@ -4,20 +4,16 @@ import net.villagerzock.compiler.ast.decl.ClassDeclaration;
 import net.villagerzock.compiler.ast.decl.Declaration;
 import net.villagerzock.compiler.ast.decl.MethodDeclaration;
 import net.villagerzock.compiler.ast.decl.ProgramNode;
-import net.villagerzock.compiler.ast.expr.CallExpression;
-import net.villagerzock.compiler.ast.expr.Expression;
-import net.villagerzock.compiler.ast.expr.StringLiteralExpression;
+import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.BlockStatement;
 import net.villagerzock.compiler.ast.stmt.ExpressionStatement;
 import net.villagerzock.compiler.ast.stmt.IfStatement;
 import net.villagerzock.compiler.ast.stmt.Statement;
 import net.villagerzock.compiler.semantic.MethodSymbol;
+import net.villagerzock.mcfunction.ICommandPart;
 import net.villagerzock.mcfunction.MCFunction;
 import net.villagerzock.mcfunction.MCFunctionUnit;
-import net.villagerzock.mcfunction.commandParts.CreateStackFrame;
-import net.villagerzock.mcfunction.commandParts.FunctionCall;
-import net.villagerzock.mcfunction.commandParts.NativePart;
-import net.villagerzock.mcfunction.commandParts.TmpWrite;
+import net.villagerzock.mcfunction.commandParts.*;
 import net.villagerzock.snbt.Example;
 import net.villagerzock.snbt.SnbtCompound;
 
@@ -26,6 +22,7 @@ import java.sql.Struct;
 import java.util.List;
 import java.util.Stack;
 
+import static net.villagerzock.compiler.ast.expr.BinaryOperator.*;
 import static net.villagerzock.snbt.Snbt.*;
 
 public class Generator {
@@ -88,7 +85,6 @@ public class Generator {
             if (decl instanceof MethodDeclaration methodDeclaration){
                 if (methodDeclaration.isNative()){
                     methodDeclaration.getFunction().addCommand(new NativePart(methodDeclaration.nativeBody().getCode()));
-                    System.out.println("Native Part: " + methodDeclaration.nativeBody().getCode());
                 }else {
                     generateBlock(methodDeclaration.body(),unit,methodDeclaration.getFunction(),pathStack,methodDeclaration.name());
                 }
@@ -121,15 +117,153 @@ public class Generator {
                 function.addCommand(new TmpWrite(compound.toSnbt()));
                 function.addCommand(new CreateStackFrame());
                 function.addCommand(new FunctionCall(method.declaration().getFunction()));
+                function.addCommand(new PopStackFrame());
             }
         }
+
         if (statement instanceof IfStatement ifStatement){
             Statement then = ifStatement.thenBranch();
             if (then instanceof BlockStatement blockStatement){
                 MCFunction f = unit.create(function.getNamespace(), function.getPath(), baseName + "_if");
                 blockStatement.setAssociatedFunction(f);
                 generateBlock(blockStatement,unit,f,pathStack,baseName);
+
+
+                String condName = baseName + "_if_cond";
+
+                ICommandPart conditionExpr = generateExpression(
+                        ifStatement.condition(),
+                        unit,
+                        function,
+                        pathStack,
+                        condName
+                );
+
+                function.addCommand(conditionExpr);
+
+                function.addCommand(
+                        new ExecuteCall(new FunctionCall(f, true))
+                                .addCondition(new ScoreMatchesCondition(condName, "1"))
+                );
             }
         }
+    }
+
+
+    private ICommandPart generateExpression(
+            Expression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        if (expression instanceof BooleanLiteralExpression bool) {
+            return new TmpScoreWrite(baseName, bool.value() ? "1" : "0");
+        }
+
+        if (expression instanceof BinaryExpression binary) {
+            return switch (binary.operator()) {
+                case GREATER, LESS, GREATER_EQUAL, LESS_EQUAL, EQUAL, NOT_EQUAL ->
+                        generateCompareExpression(binary, unit, function, pathStack, baseName);
+
+                default -> throw new IllegalStateException("Unsupported boolean binary operator: " + binary.operator());
+            };
+        }
+
+        throw new IllegalStateException("Unsupported boolean expression: " + expression.getClass().getSimpleName());
+    }
+
+    private ICommandPart generateCompareExpression(
+            BinaryExpression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        String leftName = baseName + "_left";
+        String rightName = baseName + "_right";
+
+        ICommandPart left = generateNumberExpression(expression.left(), unit, function, pathStack, leftName);
+        ICommandPart right = generateNumberExpression(expression.right(), unit, function, pathStack, rightName);
+
+        String op = switch (expression.operator()) {
+            case GREATER -> ">";
+            case LESS -> "<";
+            case GREATER_EQUAL -> ">=";
+            case LESS_EQUAL -> "<=";
+            case EQUAL -> "=";
+            case NOT_EQUAL -> "=";
+            default -> throw new IllegalStateException("Unsupported compare op: " + expression.operator());
+        };
+
+        ICommandPart setFalse = new TmpScoreWrite(baseName, "0");
+        ICommandPart setTrue = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
+                .addCondition(new ScoreCompareCondition(leftName, op, rightName));
+
+        BooleanExpressionPart part = new BooleanExpressionPart(setTrue)
+                .addSetup(left)
+                .addSetup(right)
+                .addSetup(setFalse);
+
+        if (expression.operator() == BinaryOperator.NOT_EQUAL) {
+            ICommandPart setTrueWhenNotEqual = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
+                    .addCondition(new ScoreNotEqualCondition(leftName, rightName));
+
+            return new BooleanExpressionPart(setTrueWhenNotEqual)
+                    .addSetup(left)
+                    .addSetup(right)
+                    .addSetup(setFalse);
+        }
+
+        return part;
+    }
+
+
+    private ICommandPart generateNumberExpression(
+            Expression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        if (expression instanceof NumberLiteralExpression number) {
+            return new TmpScoreWrite(baseName, number.rawValue());
+        }
+
+        if (expression instanceof BinaryExpression binary) {
+            Integer folded = tryFoldInt(binary);
+
+            if (folded != null) {
+                return new TmpScoreWrite(baseName, String.valueOf(folded));
+            }
+        }
+
+        throw new IllegalStateException("Unsupported number expression: " + expression.getClass().getSimpleName());
+    }
+
+    private Integer tryFoldInt(Expression expression) {
+        if (expression instanceof NumberLiteralExpression number) {
+            return Integer.parseInt(number.rawValue());
+        }
+
+        if (!(expression instanceof BinaryExpression binary)) {
+            return null;
+        }
+
+        Integer left = tryFoldInt(binary.left());
+        Integer right = tryFoldInt(binary.right());
+
+        if (left == null || right == null) {
+            return null;
+        }
+
+        return switch (binary.operator()) {
+            case ADD -> left + right;
+            case SUBTRACT -> left - right;
+            case MULTIPLY -> left * right;
+            case DIVIDE -> left / right;
+            case MODULO -> left % right;
+            default -> null;
+        };
     }
 }

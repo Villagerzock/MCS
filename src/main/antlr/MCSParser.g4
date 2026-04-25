@@ -88,7 +88,26 @@ statement
 	| ifStatement
 	| returnStatement
 	| variableDeclStatement
+	| forStatement
+	| whileStatement
 	| expressionStatement
+	;
+
+whileStatement
+	: WHILE LPAREN expression RPAREN statement
+	;
+
+forStatement
+	: FOR LPAREN forInit? SEMICOLON expression? SEMICOLON forUpdate? RPAREN statement
+	;
+
+forInit
+	: variableDecl
+	| expression
+	;
+
+forUpdate
+	: expression
 	;
 
 ifStatement
@@ -100,7 +119,11 @@ returnStatement
 	;
 
 variableDeclStatement
-	: typeName IDENTIFIER (EQUAL expression)? SEMICOLON
+	: variableDecl SEMICOLON
+	;
+
+variableDecl
+	: typeName IDENTIFIER (EQUAL expression)?
 	;
 
 expressionStatement
@@ -147,13 +170,18 @@ unaryExpression
 	;
 
 postfixExpression
-	: primaryExpression postfixSuffix*
+	: primaryExpression (postfixSuffix | postfixOp)*
 	;
 
 postfixSuffix
 	: DOT IDENTIFIER
 	| DOT IDENTIFIER LPAREN argumentList? RPAREN
 	| LPAREN argumentList? RPAREN
+	;
+
+postfixOp
+	: PLUS_PLUS
+	| MINUS_MINUS
 	;
 
 argumentList

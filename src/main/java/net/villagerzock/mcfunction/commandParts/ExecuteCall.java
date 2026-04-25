@@ -26,14 +26,14 @@ public final class ExecuteCall implements ICommandPart {
     }
 
     @Override
-    public String apply(String namespace) {
+    public String apply() {
         if (subcommands.isEmpty()) {
-            return "execute run %s".formatted(run.apply(namespace));
+            return "execute run %s".formatted(run.apply());
         }
 
         return "execute %s run %s".formatted(
                 String.join(" ", subcommands),
-                run.apply(namespace)
+                run.apply()
         );
     }
 }

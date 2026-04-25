@@ -54,6 +54,12 @@ RPAREN
 		}
 	;
 
+FOR : 'for';
+WHILE : 'while';
+
+PLUS_PLUS : '++';
+MINUS_MINUS : '--';
+
 LBRACKET : '[';
 RBRACKET : ']';
 DOT : '.';
@@ -102,6 +108,9 @@ BLOCK_COMMENT
 WS
 	: [ \t\r\n]+ -> skip
 	;
+
+
+
 
 mode NATIVE_BODY;
 

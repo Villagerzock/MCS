@@ -10,8 +10,8 @@ public class NativePart implements ICommandPart {
     }
 
     @Override
-    public String apply(String namespace) {
-        return removeEmptyLines(nativePart).formatted(namespace);
+    public String apply() {
+        return removeEmptyLines(nativePart).formatted("mcs");
     }
 
     public static String removeEmptyLines(String input) {

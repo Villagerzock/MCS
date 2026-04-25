@@ -5,8 +5,13 @@ class Main {
     // und location ist die position an welcher die function ausgeführt wird.
     function foo() { // function ist ein keyword und der typ, function ist wie in anderen sprachen void da könnte auch string foo() stehen
         print("Hi");
-        if(10*2 > 15) { // ein if hat eine Condition, dies kann wie hier eine Greater then sein, später sollte es aber auch möglich sein dinge über die command data abzufragen
+        boolean test = true;
+        if(10 > 15) { // ein if hat eine Condition, dies kann wie hier eine Greater then sein, später sollte es aber auch möglich sein dinge über die command data abzufragen
             print("If ist True");
+        }
+
+        for(int i = 0; i<10; i++){
+            print("${i}");
         }
     }
 }

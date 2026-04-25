@@ -13,6 +13,8 @@ repositories {
 dependencies {
     antlr("org.antlr:antlr4:4.13.1")
     implementation("org.antlr:antlr4-runtime:4.13.1")
+    implementation("com.google.code.gson:gson:2.14.0")
+    implementation("info.picocli:picocli:4.7.7")
 }
 
 tasks.generateGrammarSource {
@@ -33,5 +35,5 @@ tasks.register<JavaExec>("runMain") {
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("net.villagerzock.Main") // <- deine Main Klasse
 
-    dependsOn("runScript")
+    //dependsOn("runScript")
 }

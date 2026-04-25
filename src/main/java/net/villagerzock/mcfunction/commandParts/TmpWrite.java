@@ -10,7 +10,7 @@ public class TmpWrite implements ICommandPart {
     }
 
     @Override
-    public String apply(String namespace) {
-        return "data modify %1$s:memory tmp set value %2$s".formatted(namespace,write);
+    public String apply() {
+        return "data modify storage mcs:memory tmp set value %1$s".formatted(write);
     }
 }

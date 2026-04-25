@@ -5,4 +5,5 @@ class Std {
 tellraw @a {nbt:"stack[0].locals.s",storage:"%1$s:memory"}
     }
 
+
 }

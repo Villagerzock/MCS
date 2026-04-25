@@ -3,6 +3,7 @@ package net.villagerzock;
 import net.villagerzock.compiler.ast.AstBuilder;
 import net.villagerzock.compiler.ast.decl.ProgramNode;
 import net.villagerzock.compiler.gen.Generator;
+import net.villagerzock.compiler.gen.PathStack;
 import net.villagerzock.compiler.parser.MCSLexer;
 import net.villagerzock.compiler.parser.MCSParser;
 import net.villagerzock.compiler.semantic.SemanticAnalyzer;
@@ -12,6 +13,7 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
+import picocli.CommandLine;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -24,11 +26,43 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+import static picocli.CommandLine.*;
+
 public class Main {
 
+    public static class RuntimeData {
+        @Parameters(index = "0", description = "Path to project")
+        public Path projectPath;
+
+        @Option(names = {"-o","--output"}, description = "Output Directory", defaultValue = "./dpOut/")
+        public Path outputDirectory;
+
+        @Option(names = {"--obfuscate"}, description = "Obfuscate File Names")
+        public boolean obfuscate;
+
+        @Option(names = {"--ast"}, description = "Outputs the AST into the Console")
+        public boolean ast;
+
+        @Option(names = {"-v","--verbose"},description = "Outputs some Debug Info")
+        public boolean verbose;
+    }
+
+    public static final String YELLOW = "\u001B[33m";
+    public static final String RESET = "\u001B[0m";
+
+
+    public static final RuntimeData runtimeData = new RuntimeData();
+
     public static void main(String[] args) {
+        CommandLine cmd = new CommandLine(runtimeData);
+        cmd.parseArgs(args);
+
+        if (runtimeData.obfuscate){
+            System.out.println(YELLOW + "WARN: --obfuscate disables library metadata generation. IDE support (IntelliJ/VSC) will not have method/class information." + RESET);
+        }
+
         try {
-            Path path = Path.of("testScripts/");
+            Path path = runtimeData.projectPath.resolve("scripts/");
 
             File[] filesToCompile = new File[0];
 
@@ -65,7 +99,9 @@ public class Main {
 
                 ProgramNode ast = (ProgramNode) astBuilder.visit(programContext);
                 nodes.add(ast);
-                System.out.println(ast);
+                if (runtimeData.ast){
+                    System.out.println(ast);
+                }
             }
 
             SemanticAnalyzer analyzer = new SemanticAnalyzer();
@@ -73,12 +109,12 @@ public class Main {
             Generator generator = new Generator();
             MCFunctionUnit unit = generator.generate(nodes);
 
-            Path out = Path.of("dpOut/");
+            Path out = runtimeData.outputDirectory.resolve("data/");
             deleteRecursive(out);
             Files.createDirectory(out);
 
             for (MCFunction function : unit.getFunctions()){
-                Path p = out.resolve(function.getNamespace()).resolve("functions").resolve(function.getPath()).resolve(function.getName() + ".mcfunction");
+                Path p = out.resolve(function.getNamespace()).resolve("function").resolve(function.getPath()).resolve(function.getName() + ".mcfunction");
                 File f = p.toFile();
                 if (!f.exists()){
                     f.getParentFile().mkdirs();
@@ -89,7 +125,9 @@ public class Main {
                 }
             }
 
-            System.out.println(unit);
+            if (runtimeData.verbose){
+                System.out.println(unit);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();

@@ -230,6 +230,12 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         if (ctx.variableDeclStatement() != null) {
             return visit(ctx.variableDeclStatement());
         }
+        if (ctx.forStatement() != null) {
+            return visit(ctx.forStatement());
+        }
+        if (ctx.whileStatement() != null) {
+            return visit(ctx.whileStatement());
+        }
 
         return visit(ctx.expressionStatement());
     }
@@ -257,6 +263,11 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
     @Override
     public Node visitVariableDeclStatement(MCSParser.VariableDeclStatementContext ctx) {
+        return visit(ctx.variableDecl());
+    }
+
+    @Override
+    public Node visitVariableDecl(MCSParser.VariableDeclContext ctx) {
         TypeNode type = (TypeNode) visit(ctx.typeName());
         String name = ctx.IDENTIFIER().getText();
 
@@ -265,6 +276,47 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
                 : null;
 
         return new VariableDeclarationStatement(type, name, initializer);
+    }
+
+    @Override
+    public Node visitWhileStatement(MCSParser.WhileStatementContext ctx) {
+        Expression condition = (Expression) visit(ctx.expression());
+        Statement body = (Statement) visit(ctx.statement());
+
+        return new WhileStatement(condition, body);
+    }
+
+    @Override
+    public Node visitForStatement(MCSParser.ForStatementContext ctx) {
+        Statement initializer = ctx.forInit() != null
+                ? (Statement) visit(ctx.forInit())
+                : null;
+
+        Expression condition = ctx.expression() != null
+                ? (Expression) visit(ctx.expression())
+                : null;
+
+        Expression update = ctx.forUpdate() != null
+                ? (Expression) visit(ctx.forUpdate())
+                : null;
+
+        Statement body = (Statement) visit(ctx.statement());
+
+        return new ForStatement(initializer, condition, update, body);
+    }
+
+    @Override
+    public Node visitForInit(MCSParser.ForInitContext ctx) {
+        if (ctx.variableDecl() != null) {
+            return visit(ctx.variableDecl());
+        }
+
+        return new ExpressionStatement((Expression) visit(ctx.expression()));
+    }
+
+    @Override
+    public Node visitForUpdate(MCSParser.ForUpdateContext ctx) {
+        return visit(ctx.expression());
     }
 
     @Override
@@ -404,7 +456,11 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         Expression current = (Expression) visit(ctx.primaryExpression());
 
         for (MCSParser.PostfixSuffixContext suffix : ctx.postfixSuffix()) {
-            if (suffix.DOT() != null && suffix.LPAREN() == null) {
+            if (suffix.getText().equals("++")) {
+                current = new UpdateExpression(current, UpdateOperator.INCREMENT);
+            } else if (suffix.getText().equals("--")) {
+                current = new UpdateExpression(current, UpdateOperator.DECREMENT);
+            } else if (suffix.DOT() != null && suffix.LPAREN() == null) {
                 current = new MemberAccessExpression(current, suffix.IDENTIFIER().getText());
             } else if (suffix.DOT() != null) {
                 current = new CallExpression(

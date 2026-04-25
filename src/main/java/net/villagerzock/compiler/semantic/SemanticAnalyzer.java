@@ -416,6 +416,10 @@ public final class SemanticAnalyzer {
 			if (ifStatement.elseBranch() != null) {
 				checkStatement(ifStatement.elseBranch());
 			}
+		} else if (statement instanceof WhileStatement whileStatement) {
+			checkWhile(whileStatement);
+		} else if (statement instanceof ForStatement forStatement) {
+			checkFor(forStatement);
 		} else if (statement instanceof ReturnStatement returnStatement) {
 			checkReturn(returnStatement);
 		} else {
@@ -425,6 +429,47 @@ public final class SemanticAnalyzer {
 
 	private boolean isConditionExpressionAllowed(SemanticType type) {
 		return type == null || !type.isVoid();
+	}
+
+	private void checkWhile(WhileStatement statement) {
+		SemanticType conditionType = checkExpression(statement.condition());
+
+		if (!isConditionExpressionAllowed(conditionType)) {
+			error(
+					statement.condition(),
+					"While condition cannot be '" + conditionType + "'."
+			);
+		}
+
+		checkStatement(statement.body());
+	}
+
+	private void checkFor(ForStatement statement) {
+		Scope previous = currentScope;
+		currentScope = new Scope(currentScope);
+
+		if (statement.initializer() != null) {
+			checkStatement(statement.initializer());
+		}
+
+		if (statement.condition() != null) {
+			SemanticType conditionType = checkExpression(statement.condition());
+
+			if (!isConditionExpressionAllowed(conditionType)) {
+				error(
+						statement.condition(),
+						"For condition cannot be '" + conditionType + "'."
+				);
+			}
+		}
+
+		if (statement.update() != null) {
+			checkExpression(statement.update());
+		}
+
+		checkStatement(statement.body());
+
+		currentScope = previous;
 	}
 
 	private void checkVariableDeclaration(VariableDeclarationStatement variable) {
@@ -517,6 +562,8 @@ public final class SemanticAnalyzer {
 			result = checkBinary(binary);
 		} else if (expression instanceof AssignmentExpression assignment) {
 			result = checkAssignment(assignment);
+		} else if (expression instanceof UpdateExpression update) {
+			result = checkUpdate(update);
 		} else if (expression instanceof CallExpression call) {
 			result = checkCall(call);
 		} else if (expression instanceof MemberAccessExpression memberAccess) {
@@ -616,6 +663,25 @@ public final class SemanticAnalyzer {
 			error(
 					assignment.value(),
 					"Cannot assign '" + valueType + "' to '" + targetType + "'."
+			);
+		}
+
+		return targetType;
+	}
+
+	private SemanticType checkUpdate(UpdateExpression update) {
+		if (!(update.target() instanceof IdentifierExpression)
+				&& !(update.target() instanceof MemberAccessExpression)) {
+			error(update.target(), "Update target must be a variable or field.");
+		}
+
+		SemanticType targetType = checkExpression(update.target());
+
+		if (!SemanticType.INT.isAssignableFrom(targetType)) {
+			error(
+					update.target(),
+					"Update operator '" + update.operator()
+							+ "' requires int, got '" + targetType + "'."
 			);
 		}
 
@@ -856,6 +922,14 @@ public final class SemanticAnalyzer {
 			return variableDeclaration.name();
 		}
 
+		if (node instanceof ForStatement) {
+			return "for";
+		}
+
+		if (node instanceof WhileStatement) {
+			return "while";
+		}
+
 		if (node instanceof IdentifierExpression identifierExpression) {
 			return identifierExpression.name();
 		}
@@ -886,6 +960,10 @@ public final class SemanticAnalyzer {
 
 		if (expression instanceof AssignmentExpression assignment) {
 			return describeExpression(assignment.target()) + " = ...";
+		}
+
+		if (expression instanceof UpdateExpression update) {
+			return describeExpression(update.target()) + update.operator();
 		}
 
 		if (expression instanceof BinaryExpression binary) {
