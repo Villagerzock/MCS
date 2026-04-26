@@ -37,3 +37,11 @@ tasks.register<JavaExec>("runMain") {
 
     //dependsOn("runScript")
 }
+
+tasks.jar {
+    manifest {
+        attributes(
+            "Main-Class" to "net.villagerzock.Main"
+        )
+    }
+}

@@ -1,4 +1,4 @@
-package std:std
+package std:std;
 
 class Std {
     native function print(string s) {

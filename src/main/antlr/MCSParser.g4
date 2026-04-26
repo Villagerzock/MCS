@@ -9,11 +9,11 @@ program
 	;
 
 packageDecl
-	: PACKAGE qualifiedPath
+	: PACKAGE qualifiedPath SEMICOLON
 	;
 
 importDecl
-	: IMPORT qualifiedPath
+	: IMPORT qualifiedPath SEMICOLON
 	;
 
 qualifiedPath

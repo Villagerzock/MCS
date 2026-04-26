@@ -455,23 +455,31 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
     public Node visitPostfixExpression(MCSParser.PostfixExpressionContext ctx) {
         Expression current = (Expression) visit(ctx.primaryExpression());
 
-        for (MCSParser.PostfixSuffixContext suffix : ctx.postfixSuffix()) {
-            if (suffix.getText().equals("++")) {
-                current = new UpdateExpression(current, UpdateOperator.INCREMENT);
-            } else if (suffix.getText().equals("--")) {
-                current = new UpdateExpression(current, UpdateOperator.DECREMENT);
-            } else if (suffix.DOT() != null && suffix.LPAREN() == null) {
-                current = new MemberAccessExpression(current, suffix.IDENTIFIER().getText());
-            } else if (suffix.DOT() != null) {
-                current = new CallExpression(
-                        new MemberAccessExpression(current, suffix.IDENTIFIER().getText()),
-                        visitArguments(suffix.argumentList())
-                );
-            } else {
-                current = new CallExpression(
-                        current,
-                        visitArguments(suffix.argumentList())
-                );
+        for (int i = 1; i < ctx.getChildCount(); i++) {
+            var child = ctx.getChild(i);
+
+            if (child instanceof MCSParser.PostfixSuffixContext suffix) {
+                if (suffix.DOT() != null && suffix.LPAREN() == null) {
+                    current = new MemberAccessExpression(current, suffix.IDENTIFIER().getText());
+                } else if (suffix.DOT() != null) {
+                    current = new CallExpression(
+                            new MemberAccessExpression(current, suffix.IDENTIFIER().getText()),
+                            visitArguments(suffix.argumentList())
+                    );
+                } else {
+                    current = new CallExpression(
+                            current,
+                            visitArguments(suffix.argumentList())
+                    );
+                }
+            }
+
+            if (child instanceof MCSParser.PostfixOpContext op) {
+                if (op.PLUS_PLUS() != null) {
+                    current = new UpdateExpression(current, UpdateOperator.INCREMENT);
+                } else if (op.MINUS_MINUS() != null) {
+                    current = new UpdateExpression(current, UpdateOperator.DECREMENT);
+                }
             }
         }
 
