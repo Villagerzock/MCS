@@ -2,15 +2,8 @@ package example:test;
 
 class Main {
     function foo() {
-        print("Hi");
-        boolean test = true;
-        if(16 > 15) {
-            print("If ist True");
-        }
-
-        for(int i = 0; i<10; i++){
-            print("${i}");
-        }
+        summon("breeze_wind_charge","~ ~ ~","");
+        summon("breeze_wind_charge","~ ~ ~","");
     }
     function init(){
         foo();

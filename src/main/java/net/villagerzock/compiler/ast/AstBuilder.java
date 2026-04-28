@@ -325,6 +325,11 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
     }
 
     @Override
+    public Node visitInlineExpression(MCSParser.InlineExpressionContext ctx) {
+        return visitExpression(ctx.expression());
+    }
+
+    @Override
     public Node visitExpression(MCSParser.ExpressionContext ctx) {
         return visit(ctx.assignmentExpression());
     }

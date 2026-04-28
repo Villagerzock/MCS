@@ -196,3 +196,7 @@ primaryExpression
 	| IDENTIFIER
 	| LPAREN expression RPAREN
 	;
+
+inlineExpression
+    : expression EOF
+    ;

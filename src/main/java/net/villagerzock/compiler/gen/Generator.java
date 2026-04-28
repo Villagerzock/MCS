@@ -1,121 +1,217 @@
 package net.villagerzock.compiler.gen;
 
+import net.villagerzock.compiler.ast.AstBuilder;
 import net.villagerzock.compiler.ast.decl.ClassDeclaration;
 import net.villagerzock.compiler.ast.decl.Declaration;
 import net.villagerzock.compiler.ast.decl.MethodDeclaration;
 import net.villagerzock.compiler.ast.decl.ProgramNode;
 import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.*;
+import net.villagerzock.compiler.parser.MCSLexer;
+import net.villagerzock.compiler.parser.MCSParser;
 import net.villagerzock.compiler.semantic.MethodSymbol;
 import net.villagerzock.mcfunction.ICommandPart;
 import net.villagerzock.mcfunction.MCFunction;
 import net.villagerzock.mcfunction.MCFunctionUnit;
 import net.villagerzock.mcfunction.commandParts.*;
+import net.villagerzock.mcfunction.valueTargeting.AbstractValueTarget;
+import net.villagerzock.mcfunction.valueTargeting.DataValueTarget;
+import net.villagerzock.mcfunction.valueTargeting.ScoreboardValueTarget;
 import net.villagerzock.snbt.SnbtCompound;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
 
-import java.util.List;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static net.villagerzock.snbt.Snbt.*;
 
 public class Generator {
-    public MCFunctionUnit generate(List<ProgramNode> nodes){
+
+    public MCFunctionUnit generate(List<ProgramNode> nodes) {
         PathStack pathStack = new PathStack();
         MCFunctionUnit unit = new MCFunctionUnit();
-        for (ProgramNode node : nodes){
+
+        for (ProgramNode node : nodes) {
             pathStack.push(node.packagePath().path());
             generateClasses(node, unit, pathStack);
             pathStack.pop();
         }
-        for (ProgramNode node : nodes){
-            pathStack.push(node.packagePath().getString());
-            for (ClassDeclaration decl : node.classes()){
+
+        for (ProgramNode node : nodes) {
+            pathStack.push(node.packagePath().path());
+
+            for (ClassDeclaration decl : node.classes()) {
                 pathStack.push(decl.name());
-                updateMembers(decl, unit, pathStack);
+                updateMembers(decl, unit, pathStack, node.packagePath().namespace());
                 pathStack.pop();
             }
+
             pathStack.pop();
         }
 
         unit.analyze();
         return unit;
     }
-    private void generateClasses(ProgramNode node, MCFunctionUnit unit, PathStack pathStack){
-        for (ClassDeclaration decl : node.classes()){
+
+    private void generateClasses(ProgramNode node, MCFunctionUnit unit, PathStack pathStack) {
+        for (ClassDeclaration decl : node.classes()) {
             generateMember(decl, unit, node.packagePath().namespace(), pathStack);
         }
     }
+
     private void generateMembers(ClassDeclaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack) {
-        for (Declaration d : decl.members()){
+        for (Declaration d : decl.members()) {
             generateMember(d, unit, namespace, pathStack);
         }
     }
 
-    private void generateMember(Declaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack){
-        if (decl instanceof ClassDeclaration classDeclaration){
+    private void generateMember(Declaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack) {
+        if (decl instanceof ClassDeclaration classDeclaration) {
             pathStack.push(classDeclaration.name());
             generateMembers(classDeclaration, unit, namespace, pathStack);
             pathStack.pop();
         }
-        if (decl instanceof MethodDeclaration methodDeclaration){
 
-            if (methodDeclaration.isNative()){
-                MCFunction function = unit.create(namespace,pathStack.getPath(),methodDeclaration.name()+"_native");
+        if (decl instanceof MethodDeclaration methodDeclaration) {
+            if (methodDeclaration.isNative()) {
+                MCFunction function = unit.create(namespace, pathStack.getPath(), methodDeclaration.name() + "_native");
                 methodDeclaration.nativeBody().setAssociatedFunction(function);
-            }else {
-                MCFunction function = unit.create(namespace,pathStack.getPath(),methodDeclaration.name()+"_entry");
-                BlockStatement stmt = methodDeclaration.body();
-                stmt.setAssociatedFunction(function);
+            } else {
+                MCFunction function = unit.create(namespace, pathStack.getPath(), methodDeclaration.name() + "_entry");
+                methodDeclaration.body().setAssociatedFunction(function);
             }
         }
     }
 
-    private void updateMembers(ClassDeclaration classDeclaration, MCFunctionUnit unit, PathStack pathStack) {
-        for (Declaration decl : classDeclaration.members()){
-            if (decl instanceof ClassDeclaration declaration){
-                updateMembers(declaration,unit,pathStack);
+    private void updateMembers(ClassDeclaration classDeclaration, MCFunctionUnit unit, PathStack pathStack, String namespace) {
+        for (Declaration decl : classDeclaration.members()) {
+            if (decl instanceof ClassDeclaration declaration) {
+                pathStack.push(declaration.name());
+                updateMembers(declaration, unit, pathStack, namespace);
+                pathStack.pop();
             }
-            if (decl instanceof MethodDeclaration methodDeclaration){
-                if (methodDeclaration.isNative()){
-                    methodDeclaration.getFunction().addCommand(new NativePart(methodDeclaration.nativeBody().getCode()));
-                }else {
-                    generateBlock(methodDeclaration.body(),unit,methodDeclaration.getFunction(),pathStack,methodDeclaration.name());
+
+            if (decl instanceof MethodDeclaration methodDeclaration) {
+                if (methodDeclaration.isNative()) {
+                    generateNative(
+                            methodDeclaration.nativeBody().getCode(),
+                            unit,
+                            methodDeclaration.getFunction(),
+                            pathStack,
+                            methodDeclaration.name(),
+                            namespace
+                    );
+                } else {
+                    generateBlock(
+                            methodDeclaration.body(),
+                            unit,
+                            methodDeclaration.getFunction(),
+                            pathStack,
+                            methodDeclaration.name()
+                    );
                 }
             }
         }
     }
 
-    private void generateBlock(BlockStatement stmt, MCFunctionUnit unit, MCFunction function, PathStack pathStack, String baseName){
-        for (Statement statement : stmt.statements()){
-            generateStatement(statement,unit,function,pathStack,baseName);
+    private void generateNative(
+            String nativeCode,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName,
+            String namespace
+    ) {
+        String[] lines = nativeCode.split("\n");
+        Pattern pattern = Pattern.compile("\\$\\{([^}]*)\\}");
+        AstBuilder astBuilder = new AstBuilder();
+
+        boolean useNewFunction = false;
+        int macroCount = 0;
+
+        Map<String, String> expressionToMacroMap = new HashMap<>();
+
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = pattern.matcher(lines[i]);
+
+            while (matcher.find()) {
+                String expression = matcher.group(1);
+
+                if (expressionToMacroMap.containsKey(expression)) {
+                    lines[i] = lines[i].replace(
+                            "${%s}".formatted(expression),
+                            "$(%s)".formatted(expressionToMacroMap.get(expression))
+                    );
+
+                    if (!lines[i].startsWith("$")) {
+                        lines[i] = "$%s".formatted(lines[i]);
+                    }
+
+                    continue;
+                }
+
+                useNewFunction = true;
+
+                MCSLexer lexer = new MCSLexer(CharStreams.fromString(expression));
+                CommonTokenStream tokens = new CommonTokenStream(lexer);
+                MCSParser parser = new MCSParser(tokens);
+
+                Expression expr = (Expression) astBuilder.visit(parser.inlineExpression());
+
+                String macroName = "m_%s".formatted(macroCount++);
+
+                function.addCommand(generateExpression(
+                        expr,
+                        unit,
+                        function,
+                        pathStack,
+                        new DataValueTarget("storage mcs:memory stack[0].macro." + macroName),
+                        baseName + "_macro_" + macroName
+                ));
+
+                lines[i] = lines[i].replace(
+                        "${%s}".formatted(expression),
+                        "$(%s)".formatted(macroName)
+                );
+
+                expressionToMacroMap.put(expression, macroName);
+
+                if (!lines[i].startsWith("$")) {
+                    lines[i] = "$%s".formatted(lines[i]);
+                }
+            }
+        }
+
+        MCFunction functionWrite = function;
+
+        if (useNewFunction) {
+            functionWrite = unit.create(namespace, pathStack.getPath(), baseName + "_native");
+            function.addCommand(new FunctionCall(functionWrite));
+        }
+
+        functionWrite.addCommand(new NativePart(String.join("\n", lines)));
+    }
+
+    private void generateBlock(BlockStatement stmt, MCFunctionUnit unit, MCFunction function, PathStack pathStack, String baseName) {
+        for (Statement statement : stmt.statements()) {
+            generateStatement(statement, unit, function, pathStack, baseName);
         }
     }
 
-    private void generateStatement(Statement statement, MCFunctionUnit unit, MCFunction function, PathStack pathStack, String baseName){
-        if (statement instanceof ExpressionStatement expressionStatement){
+    private void generateStatement(
+            Statement statement,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        if (statement instanceof ExpressionStatement expressionStatement) {
             Expression exp = expressionStatement.expression();
 
-            if (exp instanceof CallExpression callExpression){
-                MethodSymbol method = callExpression.resolvedMethod();
-                SnbtCompound locals = compound();
-
-                for (int i = 0; i < callExpression.arguments().size(); i++){
-                    Expression param = callExpression.arguments().get(i);
-                    String name = method.declaration().parameters().get(i).name();
-
-                    if (param instanceof StringLiteralExpression stringLiteralExpression){
-                        locals.putString(name, stringLiteralExpression.rawValue());
-                    }
-                }
-
-                SnbtCompound compound = compound()
-                        .put("locals", locals)
-                        .put("macro", compound());
-
-                function.addCommand(new TmpWrite(compound.toSnbt()));
-                function.addCommand(new CreateStackFrame());
-                function.addCommand(new FunctionCall(method.declaration().getFunction()));
-                function.addCommand(new PopStackFrame());
-
+            if (exp instanceof CallExpression callExpression) {
+                function.addCommand(generateCallStatement(callExpression));
                 return;
             }
 
@@ -128,23 +224,21 @@ public class Generator {
                 }
 
                 String varName = identifier.name();
-                String tmpName = baseName + "_assign_" + varName;
 
-                function.addCommand(generateNumberExpression(
+                function.addCommand(generateExpression(
                         value,
                         unit,
                         function,
                         pathStack,
-                        tmpName
+                        new DataValueTarget(localPath(varName)),
+                        baseName + "_assign_" + varName
                 ));
-
-                function.addCommand(new TmpScoreToLocal(tmpName, varName));
 
                 return;
             }
 
             if (exp instanceof UpdateExpression updateExpression) {
-                Expression target = updateExpression.target(); // ggf. Getter-Name anpassen
+                Expression target = updateExpression.target();
 
                 if (!(target instanceof IdentifierExpression identifier)) {
                     throw new IllegalStateException("Unsupported update target: " + target.getClass().getSimpleName());
@@ -153,7 +247,7 @@ public class Generator {
                 String varName = identifier.name();
                 String tmpName = baseName + "_update_" + varName;
 
-                function.addCommand(new LocalToTmpScore(varName, tmpName));
+                function.addCommand(new ScoreboardValueTarget(tmpName).storeFrom(new DataValueTarget(localPath(varName))));
 
                 if (updateExpression.operator() == UpdateOperator.INCREMENT) {
                     function.addCommand(new ScoreAddValue(tmpName, 1));
@@ -163,7 +257,7 @@ public class Generator {
                     throw new IllegalStateException("Unsupported update operator: " + updateExpression.operator());
                 }
 
-                function.addCommand(new TmpScoreToLocal(tmpName, varName));
+                function.addCommand(new DataValueTarget(localPath(varName)).storeFrom(new ScoreboardValueTarget(tmpName)));
 
                 return;
             }
@@ -171,25 +265,24 @@ public class Generator {
             throw new IllegalStateException("Unsupported expression statement: " + exp.getClass().getSimpleName());
         }
 
-        if (statement instanceof IfStatement ifStatement){
+        if (statement instanceof IfStatement ifStatement) {
             Statement then = ifStatement.thenBranch();
-            if (then instanceof BlockStatement blockStatement){
+
+            if (then instanceof BlockStatement blockStatement) {
                 MCFunction f = unit.create(function.getNamespace(), function.getPath(), baseName + "_if");
                 blockStatement.setAssociatedFunction(f);
-                generateBlock(blockStatement,unit,f,pathStack,baseName);
-
+                generateBlock(blockStatement, unit, f, pathStack, baseName);
 
                 String condName = baseName + "_if_cond";
 
-                ICommandPart conditionExpr = generateExpression(
+                function.addCommand(generateExpression(
                         ifStatement.condition(),
                         unit,
                         function,
                         pathStack,
+                        new ScoreboardValueTarget(condName),
                         condName
-                );
-
-                function.addCommand(conditionExpr);
+                ));
 
                 function.addCommand(
                         new ExecuteCall(new FunctionCall(f, true))
@@ -197,35 +290,34 @@ public class Generator {
                 );
             }
         }
-        if (statement instanceof WhileStatement whileStatement){
+
+        if (statement instanceof WhileStatement whileStatement) {
             Statement body = whileStatement.body();
-            if (body instanceof BlockStatement blockStatement){
+
+            if (body instanceof BlockStatement blockStatement) {
                 MCFunction f = unit.create(function.getNamespace(), function.getPath(), baseName + "_while");
                 blockStatement.setAssociatedFunction(f);
-                generateBlock(blockStatement,unit,f,pathStack,baseName);
-
-
+                generateBlock(blockStatement, unit, f, pathStack, baseName);
 
                 String condName = baseName + "_while_cond";
 
-                ICommandPart conditionExpr = generateExpression(
+                function.addCommand(generateExpression(
                         whileStatement.condition(),
                         unit,
                         function,
                         pathStack,
+                        new ScoreboardValueTarget(condName),
                         condName
-                );
+                ));
 
-                ICommandPart repeatConditionExpr = generateExpression(
+                f.addCommand(generateExpression(
                         whileStatement.condition(),
                         unit,
                         f,
                         pathStack,
+                        new ScoreboardValueTarget(condName),
                         condName
-                );
-
-                function.addCommand(conditionExpr);
-                f.addCommand(repeatConditionExpr);
+                ));
 
                 f.addCommand(
                         new ExecuteCall(new FunctionCall(f, true))
@@ -238,10 +330,10 @@ public class Generator {
                 );
             }
         }
+
         if (statement instanceof ForStatement forStatement) {
             Statement body = forStatement.body();
 
-            // 1. init nur EINMAL im aktuellen function-context ausführen
             if (forStatement.initializer() != null) {
                 generateStatement(forStatement.initializer(), unit, function, pathStack, baseName + "_for_init");
             }
@@ -252,55 +344,49 @@ public class Generator {
 
                 String condName = baseName + "_for_cond";
 
-                // 2. condition vor dem ersten call im caller berechnen
-                ICommandPart conditionExpr;
-
                 if (forStatement.condition() != null) {
-                    conditionExpr = generateExpression(
+                    function.addCommand(generateExpression(
                             forStatement.condition(),
                             unit,
                             function,
                             pathStack,
+                            new ScoreboardValueTarget(condName),
                             condName
-                    );
+                    ));
                 } else {
-                    conditionExpr = new ScoreSet(condName, 1); // falls for(;;)
+                    function.addCommand(new ScoreSet(condName, 1));
                 }
 
-                function.addCommand(conditionExpr);
-
-                // 3. body in der for-function generieren
                 generateBlock(blockStatement, unit, f, pathStack, baseName);
 
-                // 4. update NACH body ausführen
                 if (forStatement.update() != null) {
-                    generateStatement(new ExpressionStatement(forStatement.update()), unit, f, pathStack, baseName + "_for_update");
+                    generateStatement(
+                            new ExpressionStatement(forStatement.update()),
+                            unit,
+                            f,
+                            pathStack,
+                            baseName + "_for_update"
+                    );
                 }
 
-                // 5. condition erneut am Ende der for-function berechnen
-                ICommandPart repeatConditionExpr;
-
                 if (forStatement.condition() != null) {
-                    repeatConditionExpr = generateExpression(
+                    f.addCommand(generateExpression(
                             forStatement.condition(),
                             unit,
                             f,
                             pathStack,
+                            new ScoreboardValueTarget(condName),
                             condName
-                    );
+                    ));
                 } else {
-                    repeatConditionExpr = new ScoreSet(condName, 1);
+                    f.addCommand(new ScoreSet(condName, 1));
                 }
 
-                f.addCommand(repeatConditionExpr);
-
-                // 6. solange condition true ist, ruft sich die for-function wieder auf
                 f.addCommand(
                         new ExecuteCall(new FunctionCall(f, true))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
 
-                // 7. erster Einstieg
                 function.addCommand(
                         new ExecuteCall(new FunctionCall(f, true))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
@@ -309,28 +395,194 @@ public class Generator {
         }
     }
 
+    private ICommandPart generateCallStatement(CallExpression callExpression) {
+        MethodSymbol method = callExpression.resolvedMethod();
+        SnbtCompound locals = compound();
+
+        for (int i = 0; i < callExpression.arguments().size(); i++) {
+            Expression param = callExpression.arguments().get(i);
+            String name = method.declaration().parameters().get(i).name();
+
+            if (param instanceof StringLiteralExpression stringLiteralExpression) {
+                locals.putString(name, stringLiteralExpression.rawValue());
+                continue;
+            }
+
+            throw new IllegalStateException("Only string literal call arguments are supported right now");
+        }
+
+        SnbtCompound frame = compound()
+                .put("locals", locals)
+                .put("macro", compound());
+
+        return new MultiPart(List.of(
+                new TmpWrite(frame.toSnbt()),
+                new CreateStackFrame(),
+                new FunctionCall(method.declaration().getFunction()),
+                new PopStackFrame()
+        ));
+    }
 
     private ICommandPart generateExpression(
             Expression expression,
             MCFunctionUnit unit,
             MCFunction function,
             PathStack pathStack,
+            AbstractValueTarget target,
             String baseName
     ) {
+        if (expression instanceof NumberLiteralExpression number) {
+            ScoreboardValueTarget tmp = new ScoreboardValueTarget(baseName);
+
+            return new MultiPart(List.of(
+                    new TmpScoreWrite(baseName, number.rawValue()),
+                    target.storeFrom(tmp)
+            ));
+        }
+
         if (expression instanceof BooleanLiteralExpression bool) {
-            return new TmpScoreWrite(baseName, bool.value() ? "1" : "0");
+            ScoreboardValueTarget tmp = new ScoreboardValueTarget(baseName);
+
+            return new MultiPart(List.of(
+                    new TmpScoreWrite(baseName, bool.value() ? "1" : "0"),
+                    target.storeFrom(tmp)
+            ));
+        }
+
+        if (expression instanceof StringLiteralExpression string) {
+            return target.storeFrom(new StringValueTarget(string.rawValue()));
+        }
+
+        if (expression instanceof IdentifierExpression identifier) {
+            return target.storeFrom(new DataValueTarget(localPath(identifier.name())));
+        }
+
+        if (expression instanceof CallExpression callExpression) {
+            return generateCallExpression(callExpression, unit, function, pathStack, target, baseName);
+        }
+
+        if (expression instanceof UnaryExpression unaryExpression) {
+            return generateUnaryExpression(unaryExpression, unit, function, pathStack, target, baseName);
+        }
+
+        if (expression instanceof GroupExpression groupExpression) {
+            return generateExpression(groupExpression.expression(), unit, function, pathStack, target, baseName);
         }
 
         if (expression instanceof BinaryExpression binary) {
             return switch (binary.operator()) {
-                case GREATER, LESS, GREATER_EQUAL, LESS_EQUAL, EQUAL, NOT_EQUAL ->
-                        generateCompareExpression(binary, unit, function, pathStack, baseName);
+                case ADD, SUBTRACT, MULTIPLY, DIVIDE, MODULO ->
+                        generateArithmeticExpression(binary, unit, function, pathStack, target, baseName);
 
-                default -> throw new IllegalStateException("Unsupported boolean binary operator: " + binary.operator());
+                case GREATER, LESS, GREATER_EQUAL, LESS_EQUAL, EQUAL, NOT_EQUAL ->
+                        generateCompareExpression(binary, unit, function, pathStack, target, baseName);
+
+                case LOGICAL_AND ->
+                        generateAndExpression(binary, unit, function, pathStack, target, baseName);
+
+                case LOGICAL_OR ->
+                        generateOrExpression(binary, unit, function, pathStack, target, baseName);
+
+                default -> throw new IllegalStateException("Unsupported binary operator: " + binary.operator());
             };
         }
 
-        throw new IllegalStateException("Unsupported boolean expression: " + expression.getClass().getSimpleName());
+        throw new IllegalStateException("Unsupported expression: " + expression.getClass().getSimpleName());
+    }
+
+    private ICommandPart generateCallExpression(
+            CallExpression callExpression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        MethodSymbol method = callExpression.resolvedMethod();
+        SnbtCompound locals = compound();
+
+        for (int i = 0; i < callExpression.arguments().size(); i++) {
+            Expression param = callExpression.arguments().get(i);
+            String name = method.declaration().parameters().get(i).name();
+
+            if (param instanceof StringLiteralExpression stringLiteralExpression) {
+                locals.putString(name, stringLiteralExpression.rawValue());
+                continue;
+            }
+
+            throw new IllegalStateException("Only string literal call arguments are supported right now");
+        }
+
+        SnbtCompound frame = compound()
+                .put("locals", locals)
+                .put("macro", compound());
+
+        ScoreboardValueTarget tmp = new ScoreboardValueTarget(baseName);
+
+        return new MultiPart(List.of(
+                new TmpWrite(frame.toSnbt()),
+                new CreateStackFrame(),
+                new ExecuteStoreResultScore(baseName, new FunctionCall(method.declaration().getFunction())),
+                new PopStackFrame(),
+                target.storeFrom(tmp)
+        ));
+    }
+
+    private ICommandPart generateUnaryExpression(
+            UnaryExpression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        String valueName = baseName + "_value";
+        ScoreboardValueTarget result = new ScoreboardValueTarget(baseName);
+
+        return switch (expression.operator()) {
+            case NEGATE -> new MultiPart(List.of(
+                    generateExpression(expression.operand(), unit, function, pathStack, new ScoreboardValueTarget(valueName), valueName),
+                    new TmpScoreWrite(baseName, "0"),
+                    new ScoreOperation(baseName, "-=", valueName),
+                    target.storeFrom(result)
+            ));
+
+            case NOT -> new MultiPart(List.of(
+                    generateExpression(expression.operand(), unit, function, pathStack, new ScoreboardValueTarget(valueName), valueName),
+                    new TmpScoreWrite(baseName, "1"),
+                    new ScoreOperation(baseName, "-=", valueName),
+                    target.storeFrom(result)
+            ));
+        };
+    }
+
+    private ICommandPart generateArithmeticExpression(
+            BinaryExpression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        String leftName = baseName + "_left";
+        String rightName = baseName + "_right";
+
+        String op = switch (expression.operator()) {
+            case ADD -> "+=";
+            case SUBTRACT -> "-=";
+            case MULTIPLY -> "*=";
+            case DIVIDE -> "/=";
+            case MODULO -> "%=";
+            default -> throw new IllegalStateException("Unsupported arithmetic operator: " + expression.operator());
+        };
+
+        return new MultiPart(List.of(
+                generateExpression(expression.left(), unit, function, pathStack, new ScoreboardValueTarget(leftName), leftName),
+                generateExpression(expression.right(), unit, function, pathStack, new ScoreboardValueTarget(rightName), rightName),
+                new ScoreCopy(baseName, leftName),
+                new ScoreOperation(baseName, op, rightName),
+                target.storeFrom(new ScoreboardValueTarget(baseName))
+        ));
     }
 
     private ICommandPart generateCompareExpression(
@@ -338,99 +590,123 @@ public class Generator {
             MCFunctionUnit unit,
             MCFunction function,
             PathStack pathStack,
+            AbstractValueTarget target,
             String baseName
     ) {
         String leftName = baseName + "_left";
         String rightName = baseName + "_right";
 
-        ICommandPart left = generateNumberExpression(expression.left(), unit, function, pathStack, leftName);
-        ICommandPart right = generateNumberExpression(expression.right(), unit, function, pathStack, rightName);
+        ICommandPart setFalse = new TmpScoreWrite(baseName, "0");
 
-        String op = switch (expression.operator()) {
+        ICommandPart setTrue;
+
+        if (expression.operator() == BinaryOperator.NOT_EQUAL) {
+            setTrue = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
+                    .addCondition(new ScoreNotEqualCondition(leftName, rightName));
+        } else {
+            setTrue = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
+                    .addCondition(new ScoreCompareCondition(leftName, mapCompareOperator(expression.operator()), rightName));
+        }
+
+        return new MultiPart(List.of(
+                generateExpression(expression.left(), unit, function, pathStack, new ScoreboardValueTarget(leftName), leftName),
+                generateExpression(expression.right(), unit, function, pathStack, new ScoreboardValueTarget(rightName), rightName),
+                setFalse,
+                setTrue,
+                target.storeFrom(new ScoreboardValueTarget(baseName))
+        ));
+    }
+
+    private String mapCompareOperator(BinaryOperator operator) {
+        return switch (operator) {
             case GREATER -> ">";
             case LESS -> "<";
             case GREATER_EQUAL -> ">=";
             case LESS_EQUAL -> "<=";
             case EQUAL -> "=";
-            case NOT_EQUAL -> "=";
-            default -> throw new IllegalStateException("Unsupported compare op: " + expression.operator());
+            default -> throw new IllegalStateException("Unsupported compare operator: " + operator);
         };
-
-        ICommandPart setFalse = new TmpScoreWrite(baseName, "0");
-        ICommandPart setTrue = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
-                .addCondition(new ScoreCompareCondition(leftName, op, rightName));
-
-        BooleanExpressionPart part = new BooleanExpressionPart(setTrue)
-                .addSetup(left)
-                .addSetup(right)
-                .addSetup(setFalse);
-
-        if (expression.operator() == BinaryOperator.NOT_EQUAL) {
-            ICommandPart setTrueWhenNotEqual = new ExecuteCall(new TmpScoreWrite(baseName, "1"))
-                    .addCondition(new ScoreNotEqualCondition(leftName, rightName));
-
-            return new BooleanExpressionPart(setTrueWhenNotEqual)
-                    .addSetup(left)
-                    .addSetup(right)
-                    .addSetup(setFalse);
-        }
-
-        return part;
     }
 
-
-    private ICommandPart generateNumberExpression(
-            Expression expression,
+    private ICommandPart generateAndExpression(
+            BinaryExpression expression,
             MCFunctionUnit unit,
             MCFunction function,
             PathStack pathStack,
+            AbstractValueTarget target,
             String baseName
     ) {
-        if (expression instanceof NumberLiteralExpression number) {
-            return new TmpScoreWrite(baseName, number.rawValue());
-        }
+        String leftName = baseName + "_left";
+        String rightName = baseName + "_right";
 
-        if (expression instanceof IdentifierExpression identifier) {
-            return new LocalToTmpScore(identifier.name(), baseName);
-        }
-
-        if (expression instanceof BinaryExpression binary) {
-            Integer folded = tryFoldInt(binary);
-
-            if (folded != null) {
-                return new TmpScoreWrite(baseName, String.valueOf(folded));
-            }
-
-            String leftName = baseName + "_left";
-            String rightName = baseName + "_right";
-
-            ICommandPart left = generateNumberExpression(binary.left(), unit, function, pathStack, leftName);
-            ICommandPart right = generateNumberExpression(binary.right(), unit, function, pathStack, rightName);
-
-            String op = switch (binary.operator()) {
-                case ADD -> "+=";
-                case SUBTRACT -> "-=";
-                case MULTIPLY -> "*=";
-                case DIVIDE -> "/=";
-                case MODULO -> "%=";
-                default -> throw new IllegalStateException("Unsupported number binary operator: " + binary.operator());
-            };
-
-            return new MultiPart(List.of(
-                    left,
-                    right,
-                    new ScoreCopy(baseName, leftName),
-                    new ScoreOperation(baseName, op, rightName)
-            ));
-        }
-
-        throw new IllegalStateException("Unsupported number expression: " + expression.getClass().getSimpleName());
+        return new MultiPart(List.of(
+                generateExpression(expression.left(), unit, function, pathStack, new ScoreboardValueTarget(leftName), leftName),
+                generateExpression(expression.right(), unit, function, pathStack, new ScoreboardValueTarget(rightName), rightName),
+                new ScoreCopy(baseName, leftName),
+                new ScoreOperation(baseName, "*=", rightName),
+                target.storeFrom(new ScoreboardValueTarget(baseName))
+        ));
     }
 
-    public record LocalToTmpScore(String localName, String scoreName) implements ICommandPart {
+    private ICommandPart generateOrExpression(
+            BinaryExpression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        String leftName = baseName + "_left";
+        String rightName = baseName + "_right";
+
+        return new MultiPart(List.of(
+                generateExpression(expression.left(), unit, function, pathStack, new ScoreboardValueTarget(leftName), leftName),
+                generateExpression(expression.right(), unit, function, pathStack, new ScoreboardValueTarget(rightName), rightName),
+                new ScoreCopy(baseName, leftName),
+                new ScoreOperation(baseName, "+=", rightName),
+                new ExecuteCall(new TmpScoreWrite(baseName, "1"))
+                        .addCondition(new ScoreMatchesCondition(baseName, "2..")),
+                target.storeFrom(new ScoreboardValueTarget(baseName))
+        ));
+    }
+
+    private String localPath(String localName) {
+        return "storage mcs:memory stack[0].locals." + localName;
+    }
+
+    private String macroPath(String macroName) {
+        return "storage mcs:memory stack[0].macro." + macroName;
+    }
+
+    private String quoteString(String value) {
+        return "\"" + value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"") + "\"";
+    }
+
+    public class StringValueTarget extends AbstractValueTarget {
+        private final String value;
+
+        public StringValueTarget(String value) {
+            this.value = value;
+        }
+
+        public String value() {
+            return value;
+        }
+
         @Override
-        public String apply() {
-            return "execute store result score #" + scoreName + " mcs_tmp run data get storage mcs:memory stack[0].locals." + localName;
+        protected ICommandPart iStoreFrom(AbstractValueTarget source) {
+            return null;
+        }
+
+        @Override
+        protected ICommandPart iStoreTo(AbstractValueTarget target) {
+            if (target instanceof DataValueTarget dataTarget) {
+                return new DataSetValue(dataTarget.path(), quoteString(value));
+            }
+
+            return null;
         }
     }
 
@@ -438,17 +714,12 @@ public class Generator {
         @Override
         public String apply() {
             StringBuilder builder = new StringBuilder();
+
             for (ICommandPart part : parts) {
                 builder.append(part.apply()).append("\n");
             }
-            return builder.toString().stripTrailing();
-        }
-    }
 
-    public record TmpScoreToLocal(String scoreName, String localName) implements ICommandPart {
-        @Override
-        public String apply() {
-            return "execute store result storage mcs:memory stack[0].locals." + localName + " int 1 run scoreboard players get #" + scoreName + " mcs_tmp";
+            return builder.toString().stripTrailing();
         }
     }
 
@@ -466,31 +737,6 @@ public class Generator {
         }
     }
 
-    private Integer tryFoldInt(Expression expression) {
-        if (expression instanceof NumberLiteralExpression number) {
-            return Integer.parseInt(number.rawValue());
-        }
-
-        if (!(expression instanceof BinaryExpression binary)) {
-            return null;
-        }
-
-        Integer left = tryFoldInt(binary.left());
-        Integer right = tryFoldInt(binary.right());
-
-        if (left == null || right == null) {
-            return null;
-        }
-
-        return switch (binary.operator()) {
-            case ADD -> left + right;
-            case SUBTRACT -> left - right;
-            case MULTIPLY -> left * right;
-            case DIVIDE -> left / right;
-            case MODULO -> left % right;
-            default -> null;
-        };
-    }
     public record ScoreAddValue(String scoreName, int value) implements ICommandPart {
         @Override
         public String apply() {
@@ -502,6 +748,41 @@ public class Generator {
         @Override
         public String apply() {
             return "scoreboard players remove #" + scoreName + " mcs_tmp " + value;
+        }
+    }
+
+    public record ExecuteStoreResultScore(String scoreName, ICommandPart command) implements ICommandPart {
+        @Override
+        public String apply() {
+            return "execute store result score #" + scoreName + " mcs_tmp run " + command.apply();
+        }
+    }
+
+    public record ScoreToData(String scoreName, String dataPath) implements ICommandPart {
+        @Override
+        public String apply() {
+            return "execute store result " + dataPath + " int 1 run scoreboard players get #" + scoreName + " mcs_tmp";
+        }
+    }
+
+    public record DataToScore(String dataPath, String scoreName) implements ICommandPart {
+        @Override
+        public String apply() {
+            return "execute store result score #" + scoreName + " mcs_tmp run data get " + dataPath;
+        }
+    }
+
+    public record DataToData(String sourcePath, String targetPath) implements ICommandPart {
+        @Override
+        public String apply() {
+            return "data modify " + targetPath + " set from " + sourcePath;
+        }
+    }
+
+    public record DataSetValue(String targetPath, String value) implements ICommandPart {
+        @Override
+        public String apply() {
+            return "data modify " + targetPath + " set value " + value;
         }
     }
 }

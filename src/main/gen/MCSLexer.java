@@ -1,4 +1,4 @@
-// Generated from C:/Users/marvi/IdeaProjects/MCS/src/main/antlr/MCSLexer.g4 by ANTLR 4.13.2
+// Generated from C:/Users/Marvin/IdeaProjects/MCS/src/main/antlr/MCSLexer.g4 by ANTLR 4.13.2
 import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.Token;
