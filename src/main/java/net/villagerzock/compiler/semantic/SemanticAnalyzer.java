@@ -21,7 +21,18 @@ public final class SemanticAnalyzer {
 	private ClassInfo currentClass;
 	private MethodSymbol currentMethod;
 	private Scope currentScope;
+    private SemanticType createSemanticType(net.villagerzock.compiler.ast.type.TypeNode typeNode) {
+        SemanticType type = SemanticType.from(typeNode);
 
+        if (type == null || type.isBuiltin() || type.isUnknown()) {
+            return type;
+        }
+        ProgramNode node = currentProgram.node;
+        type.setNamespace(node.packagePath().namespace());
+        type.setPath(node.packagePath().path());
+
+        return type;
+    }
 	public List<SemanticDiagnostic> analyze(List<? extends Node> nodes) {
 		diagnostics.clear();
 		programsByPackage.clear();
@@ -135,7 +146,7 @@ public final class SemanticAnalyzer {
 			return;
 		}
 
-		SemanticType fieldType = SemanticType.from(field.type());
+		SemanticType fieldType = createSemanticType(field.type());
 
 		Symbol symbol = new Symbol(field.name(), fieldType, SymbolKind.FIELD, field);
 		field.setResolvedSymbol(symbol);

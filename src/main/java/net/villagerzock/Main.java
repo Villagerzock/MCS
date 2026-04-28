@@ -1,8 +1,11 @@
 package net.villagerzock;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import net.villagerzock.compiler.ast.AstBuilder;
 import net.villagerzock.compiler.ast.decl.ProgramNode;
 import net.villagerzock.compiler.gen.Generator;
+import net.villagerzock.compiler.gen.LibGenerator;
 import net.villagerzock.compiler.gen.PathStack;
 import net.villagerzock.compiler.parser.MCSLexer;
 import net.villagerzock.compiler.parser.MCSParser;
@@ -112,7 +115,20 @@ public class Main {
             Path out = runtimeData.outputDirectory.resolve("data/");
             deleteRecursive(out);
             Files.createDirectory(out);
-
+            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+            LibGenerator libGenerator = new LibGenerator();
+            LibGenerator.JsonFile[] jsonFiles = libGenerator.generate(nodes);
+            for (LibGenerator.JsonFile jsonFile : jsonFiles) {
+                Path p = out.getParent().resolve(jsonFile.path());
+                File f = p.toFile();
+                if (!f.exists()){
+                    f.getParentFile().mkdirs();
+                    f.createNewFile();
+                }
+                try (FileOutputStream os = new FileOutputStream(f)) {
+                    os.write(gson.toJson(jsonFile.jsonElement()).getBytes(StandardCharsets.UTF_8));
+                }
+            }
             for (MCFunction function : unit.getFunctions()){
                 Path p = out.resolve(function.getNamespace()).resolve("function").resolve(function.getPath()).resolve(function.getName() + ".mcfunction");
                 File f = p.toFile();

@@ -32,4 +32,8 @@ public final class ClassDeclaration extends AstNode implements Declaration {
 	public String getString() {
 		return "Class(" + name() + ")";
 	}
+
+    public String getCanonnicalName() {
+        return "";
+    }
 }

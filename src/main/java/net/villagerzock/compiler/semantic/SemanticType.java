@@ -13,10 +13,22 @@ public final class SemanticType {
 	public static final SemanticType UNKNOWN = new SemanticType("<unknown>");
 
 	private final String name;
+    private String namespace;
+    private String path;
+    private final boolean isBuiltin;
 
 	private SemanticType(String name) {
 		this.name = name;
+        this.namespace = null;
+        this.path = null;
+        this.isBuiltin = true;
 	}
+    private SemanticType(String name, String namespace, String path) {
+        this.name = name;
+        this.namespace = namespace;
+        this.path = path;
+        this.isBuiltin = false;
+    }
 
 	public static SemanticType from(TypeNode node) {
 		if (node == null) {
@@ -36,7 +48,7 @@ public final class SemanticType {
 			case "string" -> STRING;
 			case "bool", "boolean" -> BOOLEAN;
 			case "function", "void" -> VOID;
-			default -> new SemanticType(rawName.trim());
+			default -> new SemanticType(rawName.trim(),null,null);
 		};
 	}
 
@@ -44,7 +56,26 @@ public final class SemanticType {
 		return name;
 	}
 
-	public boolean isUnknown() {
+    public String getCanonnicalName() {
+        if (namespace == null || path == null) {
+            return name;
+        }
+        return "%s:%s%s".formatted(namespace, path, name);
+    }
+
+    public void setNamespace(String namespace) {
+        this.namespace = namespace;
+    }
+
+    public void setPath(String path) {
+        this.path = path;
+    }
+
+    public boolean isBuiltin() {
+        return isBuiltin;
+    }
+
+    public boolean isUnknown() {
 		return this.equals(UNKNOWN);
 	}
 
