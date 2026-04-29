@@ -1,6 +1,6 @@
 package example:test;
 
-import std:std;
+import std:std.Std;
 
 class Main {
     function foo() {

@@ -25,13 +25,17 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         for (MCSParser.ImportDeclContext importDecl : ctx.importDecl()) {
             imports.add((ImportDeclaration) visit(importDecl));
         }
+        List<StaticImportDeclaration> staticImports = new ArrayList<>();
+        for (MCSParser.StaticImportDeclContext importDecl : ctx.staticImportDecl()) {
+            imports.add((ImportDeclaration) visit(importDecl));
+        }
 
         List<ClassDeclaration> classes = new ArrayList<>();
         for (MCSParser.ClassDeclContext classDecl : ctx.classDecl()) {
             classes.add((ClassDeclaration) visit(classDecl));
         }
 
-        return new ProgramNode(packagePath, imports, classes);
+        return new ProgramNode(packagePath, imports, classes,staticImports);
     }
 
     @Override
@@ -45,15 +49,24 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
     }
 
     @Override
+    public Node visitStaticImportDecl(MCSParser.StaticImportDeclContext ctx) {
+        return new StaticImportDeclaration((QualifiedPathNode) visit(ctx.qualifiedPath()));
+    }
+
+    @Override
     public Node visitQualifiedPath(MCSParser.QualifiedPathContext ctx) {
         String namespace = ctx.IDENTIFIER().getText();
 
         List<String> segments = new ArrayList<>();
-        for (MCSParser.PathSegmentContext segment : ctx.pathSegment()) {
-            segments.add(segment.IDENTIFIER().getText());
-        }
+        collectPathTail(ctx.pathTail(), segments);
 
         return new QualifiedPathNode(namespace, segments);
+    }
+
+    private void collectPathTail(MCSParser.PathTailContext ctx, List<String> segments) {
+        for (var identifier : ctx.IDENTIFIER()) {
+            segments.add(identifier.getText());
+        }
     }
 
     @Override
@@ -168,7 +181,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
         for (MCSParser.MethodModifierContext context : contexts) {
             if (context.REPLACE() != null) {
-                modifiers.add(MethodModifier.REPLACE);
+                modifiers.add(MethodModifier.STATIC);
             }
         }
 

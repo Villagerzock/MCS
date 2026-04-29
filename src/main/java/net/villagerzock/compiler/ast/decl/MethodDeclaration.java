@@ -79,8 +79,8 @@ public final class MethodDeclaration extends AstNode implements Declaration {
 		return modifiers.contains(modifier);
 	}
 
-	public boolean isReplace() {
-		return hasModifier(MethodModifier.REPLACE);
+	public boolean isStatic() {
+		return hasModifier(MethodModifier.STATIC);
 	}
 
 	public boolean isNative() {

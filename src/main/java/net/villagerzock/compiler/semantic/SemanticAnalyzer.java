@@ -10,34 +10,41 @@ import net.villagerzock.compiler.ast.stmt.*;
 import java.util.*;
 
 public final class SemanticAnalyzer {
-	private static final String STD_NAMESPACE = "std:std";
+	private static final StaticImportDeclaration STD_STATIC_IMPORT = new StaticImportDeclaration(
+			new QualifiedPathNode("std", List.of("std", "Std", "*"))
+	);
 
 	private final List<SemanticDiagnostic> diagnostics = new ArrayList<>();
 	private final Map<String, ProgramInfo> programsByPackage = new LinkedHashMap<>();
 
 	private ProgramInfo currentProgram;
 	private Map<String, ClassInfo> currentVisibleClasses = Map.of();
+	private Map<String, MethodSymbol> currentVisibleStaticMethods = Map.of();
 
 	private ClassInfo currentClass;
 	private MethodSymbol currentMethod;
 	private Scope currentScope;
-    private SemanticType createSemanticType(net.villagerzock.compiler.ast.type.TypeNode typeNode) {
-        SemanticType type = SemanticType.from(typeNode);
 
-        if (type == null || type.isBuiltin() || type.isUnknown()) {
-            return type;
-        }
-        ProgramNode node = currentProgram.node;
-        type.setNamespace(node.packagePath().namespace());
-        type.setPath(node.packagePath().path());
+	private SemanticType createSemanticType(net.villagerzock.compiler.ast.type.TypeNode typeNode) {
+		SemanticType type = SemanticType.from(typeNode);
 
-        return type;
-    }
+		if (type == null || type.isBuiltin() || type.isUnknown()) {
+			return type;
+		}
+
+		ProgramNode node = currentProgram.node;
+		type.setNamespace(node.packagePath().namespace());
+		type.setPath(node.packagePath().path());
+
+		return type;
+	}
+
 	public List<SemanticDiagnostic> analyze(List<? extends Node> nodes) {
 		diagnostics.clear();
 		programsByPackage.clear();
 		currentProgram = null;
 		currentVisibleClasses = Map.of();
+		currentVisibleStaticMethods = Map.of();
 		currentClass = null;
 		currentMethod = null;
 		currentScope = null;
@@ -164,10 +171,6 @@ public final class SemanticAnalyzer {
 			return;
 		}
 
-		if (method.isNative() && method.isReplace()) {
-			error(method, "Method '" + method.name() + "' cannot be both native and replace.");
-		}
-
 		if (method.isNative() && method.nativeBody() == null) {
 			error(method, "Native method '" + method.name() + "' must have a native body.");
 		}
@@ -189,9 +192,10 @@ public final class SemanticAnalyzer {
 				continue;
 			}
 
+			SemanticType parameterType = createSemanticType(parameter.type());
 			Symbol parameterSymbol = new Symbol(
 					parameter.name(),
-					SemanticType.from(parameter.type()),
+					parameterType,
 					SymbolKind.PARAMETER,
 					parameter
 			);
@@ -199,9 +203,10 @@ public final class SemanticAnalyzer {
 			parameters.add(parameterSymbol);
 		}
 
+		SemanticType returnType = createSemanticType(method.returnType());
 		MethodSymbol methodSymbol = new MethodSymbol(
 				method.name(),
-				SemanticType.from(method.returnType()),
+				returnType,
 				List.copyOf(parameters),
 				method
 		);
@@ -212,6 +217,7 @@ public final class SemanticAnalyzer {
 	private void checkProgram(ProgramInfo program) {
 		currentProgram = program;
 		currentVisibleClasses = buildVisibleClasses(program);
+		currentVisibleStaticMethods = buildVisibleStaticMethods(program);
 
 		checkTypeDeclarations(program);
 
@@ -229,6 +235,7 @@ public final class SemanticAnalyzer {
 
 		currentProgram = null;
 		currentVisibleClasses = Map.of();
+		currentVisibleStaticMethods = Map.of();
 		currentMethod = null;
 		currentScope = null;
 	}
@@ -236,13 +243,8 @@ public final class SemanticAnalyzer {
 	private Map<String, ClassInfo> buildVisibleClasses(ProgramInfo program) {
 		Map<String, ClassInfo> visible = new LinkedHashMap<>();
 
-		if (!STD_NAMESPACE.equals(program.packageName)) {
-			addImportedPackageClasses(visible, program, STD_NAMESPACE, program.node);
-		}
-
 		for (ImportDeclaration importDeclaration : program.node.imports()) {
-			String importPackage = importName(importDeclaration);
-			addImportedPackageClasses(visible, program, importPackage, importDeclaration);
+			addImportedClasses(visible, program, importDeclaration);
 		}
 
 		for (ClassInfo classInfo : program.classes.values()) {
@@ -260,6 +262,75 @@ public final class SemanticAnalyzer {
 		}
 
 		return visible;
+	}
+
+	private Map<String, MethodSymbol> buildVisibleStaticMethods(ProgramInfo program) {
+		Map<String, MethodSymbol> visible = new LinkedHashMap<>();
+
+		addStaticImportedMethods(visible, program, STD_STATIC_IMPORT);
+
+		for (StaticImportDeclaration staticImportDeclaration : program.node.staticImports()) {
+			addStaticImportedMethods(visible, program, staticImportDeclaration);
+		}
+
+		return visible;
+	}
+
+	private void addImportedClasses(
+			Map<String, ClassInfo> visible,
+			ProgramInfo current,
+			ImportDeclaration importDeclaration
+	) {
+		QualifiedPathNode path = importDeclaration.path();
+		if (path == null) {
+			return;
+		}
+
+		List<String> segments = path.segments();
+		if (segments.isEmpty()) {
+			error(importDeclaration, "Invalid import '" + importName(importDeclaration) + "'.");
+			return;
+		}
+
+		String last = segments.get(segments.size() - 1);
+		if ("*".equals(last)) {
+			String packageName = toPackageName(path.namespace(), segments.subList(0, segments.size() - 1));
+			addImportedPackageClasses(visible, current, packageName, importDeclaration);
+			return;
+		}
+
+		String className = last;
+		String packageName = toPackageName(path.namespace(), segments.subList(0, segments.size() - 1));
+		ProgramInfo imported = programsByPackage.get(packageName);
+
+		if (imported == null) {
+			error(
+					importDeclaration,
+					"Unknown import package '" + packageName
+							+ "' while checking package '" + current.packageName + "'."
+			);
+			return;
+		}
+
+		ClassInfo importedClass = imported.classes.get(className);
+		if (importedClass == null) {
+			error(
+					importDeclaration,
+					"Unknown imported class '" + className
+							+ "' in package '" + packageName + "'."
+			);
+			return;
+		}
+
+		ClassInfo conflict = visible.putIfAbsent(importedClass.declaration.name(), importedClass);
+		if (conflict != null && conflict != importedClass) {
+			error(
+					importDeclaration,
+					"Imported class name conflict for '" + importedClass.declaration.name()
+							+ "'. Package '" + imported.packageName
+							+ "' conflicts with package '" + conflict.owner.packageName + "'."
+			);
+		}
 	}
 
 	private void addImportedPackageClasses(
@@ -290,6 +361,84 @@ public final class SemanticAnalyzer {
 								+ "' conflicts with package '" + conflict.owner.packageName + "'."
 				);
 			}
+		}
+	}
+
+	private void addStaticImportedMethods(
+			Map<String, MethodSymbol> visible,
+			ProgramInfo current,
+			StaticImportDeclaration staticImportDeclaration
+	) {
+		QualifiedPathNode path = staticImportDeclaration.path();
+		if (path == null) {
+			return;
+		}
+
+		List<String> segments = path.segments();
+		if (segments.size() < 2) {
+			error(staticImportDeclaration, "Invalid static import '" + staticImportName(staticImportDeclaration) + "'.");
+			return;
+		}
+
+		String memberName = segments.get(segments.size() - 1);
+		String className = segments.get(segments.size() - 2);
+		String packageName = toPackageName(path.namespace(), segments.subList(0, segments.size() - 2));
+
+		ProgramInfo imported = programsByPackage.get(packageName);
+		if (imported == null) {
+			error(
+					staticImportDeclaration,
+					"Unknown static import package '" + packageName
+							+ "' while checking package '" + current.packageName + "'."
+			);
+			return;
+		}
+
+		ClassInfo importedClass = imported.classes.get(className);
+		if (importedClass == null) {
+			error(
+					staticImportDeclaration,
+					"Unknown static import class '" + className
+							+ "' in package '" + packageName + "'."
+			);
+			return;
+		}
+
+		if ("*".equals(memberName)) {
+			for (MethodSymbol method : importedClass.methods.values()) {
+				addVisibleStaticMethod(visible, staticImportDeclaration, method, importedClass);
+			}
+			return;
+		}
+
+		MethodSymbol method = importedClass.methods.get(memberName);
+		if (method == null) {
+			error(
+					staticImportDeclaration,
+					"Unknown static imported method '" + memberName
+							+ "' on class '" + importedClass.qualifiedName() + "'."
+			);
+			return;
+		}
+
+		addVisibleStaticMethod(visible, staticImportDeclaration, method, importedClass);
+	}
+
+	private void addVisibleStaticMethod(
+			Map<String, MethodSymbol> visible,
+			Node errorNode,
+			MethodSymbol method,
+			ClassInfo importedClass
+	) {
+		MethodSymbol conflict = visible.putIfAbsent(method.name(), method);
+
+		if (conflict != null && conflict != method) {
+			error(
+					errorNode,
+					"Static import method conflict for '" + method.name()
+							+ "'. Class '" + importedClass.qualifiedName()
+							+ "' conflicts with another static import."
+			);
 		}
 	}
 
@@ -484,7 +633,7 @@ public final class SemanticAnalyzer {
 	}
 
 	private void checkVariableDeclaration(VariableDeclarationStatement variable) {
-		SemanticType declaredType = SemanticType.from(variable.type());
+		SemanticType declaredType = createSemanticType(variable.type());
 
 		checkKnownType(variable.type(), declaredType, "variable '" + variable.name() + "'");
 
@@ -756,27 +905,16 @@ public final class SemanticAnalyzer {
 				return local;
 			}
 
-			for (ClassInfo visibleClass : currentVisibleClasses.values()) {
-				MethodSymbol method = visibleClass.methods.get(identifier.name());
-
-				if (method != null) {
-					return method;
-				}
-			}
-
-			return null;
+			return currentVisibleStaticMethods.get(identifier.name());
 		}
 
 		if (callee instanceof SelectExpression memberAccess) {
-			SemanticType targetType = checkExpression(memberAccess.target());
-			memberAccess.setResolvedTargetType(targetType);
-			ClassInfo classInfo = currentVisibleClasses.get(targetType.name());
+			ClassInfo classInfo = resolveSelectTargetClass(memberAccess);
 
 			if (classInfo == null) {
 				return null;
 			}
 
-			memberAccess.setResolvedTargetClass(classInfo.declaration);
 			MethodSymbol method = classInfo.methods.get(memberAccess.memberName());
 			if (method != null) {
 				memberAccess.setResolvedMethod(method);
@@ -789,12 +927,12 @@ public final class SemanticAnalyzer {
 	}
 
 	private SemanticType checkMemberAccess(SelectExpression memberAccess) {
-		SemanticType targetType = checkExpression(memberAccess.target());
-		memberAccess.setResolvedTargetType(targetType);
-
-		ClassInfo classInfo = currentVisibleClasses.get(targetType.name());
+		ClassInfo classInfo = resolveSelectTargetClass(memberAccess);
 
 		if (classInfo == null) {
+			SemanticType targetType = checkExpression(memberAccess.target());
+			memberAccess.setResolvedTargetType(targetType);
+
 			error(
 					memberAccess,
 					"Type '" + targetType
@@ -802,8 +940,6 @@ public final class SemanticAnalyzer {
 			);
 			return SemanticType.UNKNOWN;
 		}
-
-		memberAccess.setResolvedTargetClass(classInfo.declaration);
 
 		Symbol field = classInfo.fields.get(memberAccess.memberName());
 		if (field != null) {
@@ -822,10 +958,32 @@ public final class SemanticAnalyzer {
 		error(
 				memberAccess,
 				"Unknown member '" + memberAccess.memberName()
-						+ "' on type '" + targetType + "'."
+						+ "' on type '" + classInfo.declaration.name() + "'."
 		);
 
 		return SemanticType.UNKNOWN;
+	}
+
+	private ClassInfo resolveSelectTargetClass(SelectExpression memberAccess) {
+		if (memberAccess.target() instanceof IdentifierExpression identifier) {
+			ClassInfo directClass = currentVisibleClasses.get(identifier.name());
+			if (directClass != null) {
+				SemanticType targetType = SemanticType.fromName(identifier.name());
+				memberAccess.setResolvedTargetType(targetType);
+				memberAccess.setResolvedTargetClass(directClass.declaration);
+				return directClass;
+			}
+		}
+
+		SemanticType targetType = checkExpression(memberAccess.target());
+		memberAccess.setResolvedTargetType(targetType);
+
+		ClassInfo classInfo = currentVisibleClasses.get(targetType.name());
+		if (classInfo != null) {
+			memberAccess.setResolvedTargetClass(classInfo.declaration);
+		}
+
+		return classInfo;
 	}
 
 	private void checkKnownType(Node node, SemanticType type, String elementName) {
@@ -911,6 +1069,10 @@ public final class SemanticAnalyzer {
 
 		if (node instanceof ImportDeclaration importDeclaration) {
 			return importName(importDeclaration);
+		}
+
+		if (node instanceof StaticImportDeclaration staticImportDeclaration) {
+			return staticImportName(staticImportDeclaration);
 		}
 
 		if (node instanceof ClassDeclaration classDeclaration) {
@@ -1020,6 +1182,22 @@ public final class SemanticAnalyzer {
 		}
 
 		return importDeclaration.path().asImportString();
+	}
+
+	private String staticImportName(StaticImportDeclaration staticImportDeclaration) {
+		if (staticImportDeclaration.path() == null) {
+			return "";
+		}
+
+		return staticImportDeclaration.path().asImportString();
+	}
+
+	private String toPackageName(String namespace, List<String> segments) {
+		if (segments.isEmpty()) {
+			return namespace + ":";
+		}
+
+		return namespace + ":" + String.join(".", segments);
 	}
 
 	private static final class ProgramInfo {

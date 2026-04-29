@@ -28,17 +28,18 @@ tasks.generateGrammarSource {
 tasks.register<Exec>("runScript") {
     commandLine("bash", "run.sh")
 }
+tasks.configureEach {
+    if (name != "runScript" && org.gradle.internal.os.OperatingSystem.current().isLinux) {
+        dependsOn("runScript")
+    }
+}
 tasks.register<JavaExec>("runMain") {
     group = "application"
     description = "Runs the main class"
 
     classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("net.villagerzock.Main") // <- deine Main Klasse
+    mainClass.set("net.villagerzock.Main")
     args = listOf("./testScripts/","--ast","-v")
-    if (org.gradle.internal.os.OperatingSystem.current().isLinux) {
-        dependsOn("runScript")
-    }
-
 }
 
 tasks.jar {
