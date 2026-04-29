@@ -465,10 +465,10 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
             if (child instanceof MCSParser.PostfixSuffixContext suffix) {
                 if (suffix.DOT() != null && suffix.LPAREN() == null) {
-                    current = new MemberAccessExpression(current, suffix.IDENTIFIER().getText());
+                    current = new SelectExpression(current, suffix.IDENTIFIER().getText());
                 } else if (suffix.DOT() != null) {
                     current = new CallExpression(
-                            new MemberAccessExpression(current, suffix.IDENTIFIER().getText()),
+                            new SelectExpression(current, suffix.IDENTIFIER().getText()),
                             visitArguments(suffix.argumentList())
                     );
                 } else {

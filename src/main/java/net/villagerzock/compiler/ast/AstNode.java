@@ -20,7 +20,7 @@ public abstract class AstNode implements Node {
 		return sourceRange;
 	}
 
-	public abstract String getString();
+
 
 	@Override
 	public final String toString() {

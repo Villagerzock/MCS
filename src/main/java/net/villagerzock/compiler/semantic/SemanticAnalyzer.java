@@ -577,7 +577,7 @@ public final class SemanticAnalyzer {
 			result = checkUpdate(update);
 		} else if (expression instanceof CallExpression call) {
 			result = checkCall(call);
-		} else if (expression instanceof MemberAccessExpression memberAccess) {
+		} else if (expression instanceof SelectExpression memberAccess) {
 			result = checkMemberAccess(memberAccess);
 		} else {
 			error(expression, "Unsupported expression: " + expression.getClass().getSimpleName() + ".");
@@ -663,7 +663,7 @@ public final class SemanticAnalyzer {
 
 	private SemanticType checkAssignment(AssignmentExpression assignment) {
 		if (!(assignment.target() instanceof IdentifierExpression)
-				&& !(assignment.target() instanceof MemberAccessExpression)) {
+				&& !(assignment.target() instanceof SelectExpression)) {
 			error(assignment.target(), "Assignment target must be a variable or field.");
 		}
 
@@ -682,7 +682,7 @@ public final class SemanticAnalyzer {
 
 	private SemanticType checkUpdate(UpdateExpression update) {
 		if (!(update.target() instanceof IdentifierExpression)
-				&& !(update.target() instanceof MemberAccessExpression)) {
+				&& !(update.target() instanceof SelectExpression)) {
 			error(update.target(), "Update target must be a variable or field.");
 		}
 
@@ -767,7 +767,7 @@ public final class SemanticAnalyzer {
 			return null;
 		}
 
-		if (callee instanceof MemberAccessExpression memberAccess) {
+		if (callee instanceof SelectExpression memberAccess) {
 			SemanticType targetType = checkExpression(memberAccess.target());
 			memberAccess.setResolvedTargetType(targetType);
 			ClassInfo classInfo = currentVisibleClasses.get(targetType.name());
@@ -788,7 +788,7 @@ public final class SemanticAnalyzer {
 		return null;
 	}
 
-	private SemanticType checkMemberAccess(MemberAccessExpression memberAccess) {
+	private SemanticType checkMemberAccess(SelectExpression memberAccess) {
 		SemanticType targetType = checkExpression(memberAccess.target());
 		memberAccess.setResolvedTargetType(targetType);
 
@@ -945,8 +945,8 @@ public final class SemanticAnalyzer {
 			return identifierExpression.name();
 		}
 
-		if (node instanceof MemberAccessExpression memberAccessExpression) {
-			return describeExpression(memberAccessExpression);
+		if (node instanceof SelectExpression selectExpression) {
+			return describeExpression(selectExpression);
 		}
 
 		if (node instanceof CallExpression callExpression) {
@@ -961,7 +961,7 @@ public final class SemanticAnalyzer {
 			return identifier.name();
 		}
 
-		if (expression instanceof MemberAccessExpression memberAccess) {
+		if (expression instanceof SelectExpression memberAccess) {
 			return describeExpression(memberAccess.target()) + "." + memberAccess.memberName();
 		}
 

@@ -20,6 +20,7 @@ ELSE : 'else';
 RETURN : 'return';
 TRUE : 'true';
 FALSE : 'false';
+STATIC : 'static';
 
 NATIVE_BLOCK_START
 	: {expectNativeBlock}? '{'

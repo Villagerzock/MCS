@@ -48,6 +48,9 @@ public class Main {
 
         @Option(names = {"-v","--verbose"},description = "Outputs some Debug Info")
         public boolean verbose;
+
+        @Option(names = {"-cp","--classpath"},split = ";", description = "Specify the Classpath, Can be Split with ';'")
+        public String[] classpath;
     }
 
     public static final String YELLOW = "\u001B[33m";

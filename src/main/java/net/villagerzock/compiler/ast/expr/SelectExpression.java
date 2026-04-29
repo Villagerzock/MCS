@@ -8,7 +8,7 @@ import net.villagerzock.compiler.semantic.MethodSymbol;
 import net.villagerzock.compiler.ast.decl.ClassDeclaration;
 import net.villagerzock.compiler.ast.decl.MethodDeclaration;
 
-public final class MemberAccessExpression extends AstNode implements Expression {
+public final class SelectExpression extends AstNode implements Expression {
 	private SemanticType resolvedType;
 	private SemanticType resolvedTargetType;
 	private ClassDeclaration resolvedTargetClass;
@@ -17,11 +17,11 @@ public final class MemberAccessExpression extends AstNode implements Expression 
 	private final Expression target;
 	private final String memberName;
 
-	public MemberAccessExpression(Expression target, String memberName) {
+	public SelectExpression(Expression target, String memberName) {
 		this(target, memberName, SourceRange.UNKNOWN);
 	}
 
-	public MemberAccessExpression(Expression target, String memberName, SourceRange sourceRange) {
+	public SelectExpression(Expression target, String memberName, SourceRange sourceRange) {
 		super(sourceRange);
 		this.target = target;
 		this.memberName = memberName;

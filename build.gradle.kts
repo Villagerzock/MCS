@@ -34,8 +34,11 @@ tasks.register<JavaExec>("runMain") {
 
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("net.villagerzock.Main") // <- deine Main Klasse
+    args = listOf("./testScripts/","--ast","-v")
+    if (org.gradle.internal.os.OperatingSystem.current().isLinux) {
+        dependsOn("runScript")
+    }
 
-    //dependsOn("runScript")
 }
 
 tasks.jar {

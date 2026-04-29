@@ -1,9 +1,16 @@
 package example:test;
 
+import std:std;
+
 class Main {
     function foo() {
         summon("breeze_wind_charge","~ ~ ~","");
         summon("breeze_wind_charge","~ ~ ~","");
+        boolean test = true;
+        for (int i = 0; i< 10; i++){
+            print("Hi");
+        }
+        Std.print("Hi");
     }
     function init(){
         foo();

@@ -5,19 +5,26 @@ options {
 }
 
 program
-	: packageDecl? importDecl* classDecl* EOF
+	: packageDecl importDecl* classDecl* EOF
 	;
 
 packageDecl
-	: PACKAGE qualifiedPath SEMICOLON
+	: PACKAGE packagePath SEMICOLON
 	;
 
 importDecl
-	: IMPORT qualifiedPath SEMICOLON
+	: IMPORT importPath SEMICOLON
+	;
+staticImportDecl
+    : IMPORT STATIC importPath SEMICOLON
+    ;
+
+packagePath
+	: IDENTIFIER (COLON pathSegment (SLASH pathSegment)*)?
 	;
 
-qualifiedPath
-	: IDENTIFIER COLON pathSegment (SLASH pathSegment)*
+importPath
+	: packagePath COLON (IDENTIFIER | STAR)
 	;
 
 pathSegment
