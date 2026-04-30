@@ -84,8 +84,17 @@ public class Generator {
                 methodDeclaration.body().setAssociatedFunction(function);
             }
         }
+        if (decl instanceof FieldDeclaration fieldDeclaration){
+            String name = fieldDeclaration.name();
+            MCFunction getter = unit.create(namespace,pathStack.getPath(),name+"_getter");
+            MCFunction setter = unit.create(namespace,pathStack.getPath(),name+"_setter");
+            getter.setUsesMacros(true);
+            setter.setUsesMacros(true);
+            getter.addCommand(new GetFieldPart(name));
+            setter.addCommand(new SetFieldPart(name));
+        }
         if (decl instanceof ConstructorDeclaration constructorDeclaration){
-            MCFunction function = unit.create(namespace, pathStack.getPath(),  "init");
+            MCFunction function = unit.create(namespace, pathStack.getPath(),  "ctor");
             constructorDeclaration.body().setAssociatedFunction(function);
         }
     }
@@ -124,7 +133,7 @@ public class Generator {
                         unit,
                         constructorDeclaration.getFunction(),
                         pathStack,
-                        "init"
+                        "ctor"
                 );
             }
         }

@@ -2,9 +2,13 @@ package example:test;
 
 class Main {
     class Test {
-        constructor(){}
+        string field;
+
+        constructor(){
+            field = "Test";
+        }
     }
-    static function foo() {
+    static Test foo() {
         summon("breeze_wind_charge","~ ~ ~","");
         summon("breeze_wind_charge","~ ~ ~","");
         for (int i = 0; i< 10; i++){
@@ -13,6 +17,8 @@ class Main {
         print("Hi");
 
         Test test = new Test();
+        print(test.field);
+        return test;
     }
     function init(){
         foo();
