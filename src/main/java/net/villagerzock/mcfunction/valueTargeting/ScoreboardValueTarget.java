@@ -5,6 +5,8 @@ import net.villagerzock.compiler.gen.Generator;
 import net.villagerzock.mcfunction.ICommandPart;
 import net.villagerzock.mcfunction.commandParts.ExecuteStoreResultScoreToData;
 
+import java.util.Objects;
+
 public class ScoreboardValueTarget extends AbstractValueTarget {
 
     private final String scoreName;
@@ -37,5 +39,13 @@ public class ScoreboardValueTarget extends AbstractValueTarget {
         }
 
         return null;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof ScoreboardValueTarget dataValueTarget){
+            return Objects.equals(dataValueTarget.scoreName, this.scoreName);
+        }
+        return false;
     }
 }

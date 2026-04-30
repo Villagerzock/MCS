@@ -50,7 +50,7 @@ methodDecl
 	;
 
 nativeMethodDecl
-	: NATIVE returnType IDENTIFIER LPAREN parameterList? RPAREN nativeBlock
+	: NATIVE methodModifier* returnType IDENTIFIER LPAREN parameterList? RPAREN nativeBlock
 	;
 
 normalMethodDecl
@@ -58,7 +58,7 @@ normalMethodDecl
 	;
 
 methodModifier
-	: REPLACE
+	: STATIC
 	;
 
 nativeBlock
@@ -193,6 +193,7 @@ argumentList
 
 primaryExpression
 	: NUMBER
+	| DOLLAR STRING
 	| STRING
 	| TRUE
 	| FALSE

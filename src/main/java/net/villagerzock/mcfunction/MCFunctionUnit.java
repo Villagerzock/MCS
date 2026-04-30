@@ -61,6 +61,7 @@ public class MCFunctionUnit {
     public String toString() {
         StringBuilder builder = new StringBuilder();
         for (MCFunction f : functions){
+            if (f instanceof LightMCFunction) continue;
             builder.append("\n");
             builder.append(f.getFullPath());
             builder.append(":\n");

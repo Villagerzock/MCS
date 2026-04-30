@@ -13,14 +13,13 @@ PACKAGE : 'package';
 IMPORT : 'import';
 CLASS : 'class';
 NATIVE : 'native' { inNativeDeclaration = true; nativeParenDepth = 0; expectNativeBlock = false; };
-REPLACE : 'replace';
+STATIC : 'static';
 FUNCTION : 'function';
 IF : 'if';
 ELSE : 'else';
 RETURN : 'return';
 TRUE : 'true';
 FALSE : 'false';
-STATIC : 'static';
 
 NATIVE_BLOCK_START
 	: {expectNativeBlock}? '{'

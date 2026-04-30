@@ -8,13 +8,8 @@ public class NativePart implements ICommandPart {
     public NativePart(String nativePart) {
         this.nativePart = nativePart;
     }
-
     @Override
     public String apply() {
-        return removeEmptyLines(nativePart).formatted("mcs");
-    }
-
-    public static String removeEmptyLines(String input) {
-        return input.replaceAll("(?m)^[ \\t]*\\r?\\n", "");
+        return nativePart;
     }
 }

@@ -6,6 +6,8 @@ import net.villagerzock.mcfunction.commandParts.DataGetCommand;
 import net.villagerzock.mcfunction.commandParts.DataModifyFrom;
 import net.villagerzock.mcfunction.commandParts.ExecuteStoreResultData;
 
+import java.util.Objects;
+
 public class DataValueTarget extends AbstractValueTarget {
 
     private final String path;
@@ -45,5 +47,13 @@ public class DataValueTarget extends AbstractValueTarget {
         }
 
         return null;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof DataValueTarget dataValueTarget){
+            return Objects.equals(dataValueTarget.path, this.path);
+        }
+        return false;
     }
 }

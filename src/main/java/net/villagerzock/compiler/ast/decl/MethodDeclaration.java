@@ -11,7 +11,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 
-public final class MethodDeclaration extends AstNode implements Declaration {
+public class MethodDeclaration extends AstNode implements Declaration {
 	private final Set<MethodModifier> modifiers;
 	private final TypeNode returnType;
 	private final String name;

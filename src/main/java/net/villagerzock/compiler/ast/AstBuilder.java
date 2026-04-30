@@ -180,7 +180,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         EnumSet<MethodModifier> modifiers = EnumSet.noneOf(MethodModifier.class);
 
         for (MCSParser.MethodModifierContext context : contexts) {
-            if (context.REPLACE() != null) {
+            if (context.STATIC() != null) {
                 modifiers.add(MethodModifier.STATIC);
             }
         }
@@ -338,13 +338,13 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
     }
 
     @Override
-    public Node visitInlineExpression(MCSParser.InlineExpressionContext ctx) {
+    public Expression visitInlineExpression(MCSParser.InlineExpressionContext ctx) {
         return visitExpression(ctx.expression());
     }
 
     @Override
-    public Node visitExpression(MCSParser.ExpressionContext ctx) {
-        return visit(ctx.assignmentExpression());
+    public Expression visitExpression(MCSParser.ExpressionContext ctx) {
+        return (Expression) visit(ctx.assignmentExpression());
     }
 
     @Override
@@ -509,7 +509,12 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         if (ctx.NUMBER() != null) {
             return new NumberLiteralExpression(ctx.NUMBER().getText());
         }
+        if (ctx.DOLLAR() != null && ctx.STRING() != null){
+            String raw = ctx.STRING().getText();
+            raw = raw.substring(1, raw.length() - 1);
 
+            return new TStringLiteralExpression(raw);
+        }
         if (ctx.STRING() != null) {
             String raw = ctx.STRING().getText();
             raw = raw.substring(1, raw.length() - 1);

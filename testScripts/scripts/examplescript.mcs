@@ -1,16 +1,14 @@
 package example:test;
 
-import std:std.Std;
-
 class Main {
-    function foo() {
+    static function foo() {
         summon("breeze_wind_charge","~ ~ ~","");
         summon("breeze_wind_charge","~ ~ ~","");
-        boolean test = true;
+        string test = "test";
         for (int i = 0; i< 10; i++){
-            print("Hi");
+            print($"Hi i is ${i}");
         }
-        Std.print("Hi");
+        print("Hi");
     }
     function init(){
         foo();

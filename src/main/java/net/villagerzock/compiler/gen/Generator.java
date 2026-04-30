@@ -18,6 +18,7 @@ import net.villagerzock.mcfunction.valueTargeting.AbstractValueTarget;
 import net.villagerzock.mcfunction.valueTargeting.DataValueTarget;
 import net.villagerzock.mcfunction.valueTargeting.ScoreboardValueTarget;
 import net.villagerzock.snbt.SnbtCompound;
+import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 
@@ -34,12 +35,14 @@ public class Generator {
         MCFunctionUnit unit = new MCFunctionUnit();
 
         for (ProgramNode node : nodes) {
+            if (node.isLib()) continue;
             pathStack.push(node.packagePath().path());
             generateClasses(node, unit, pathStack);
             pathStack.pop();
         }
 
         for (ProgramNode node : nodes) {
+            if (node.isLib()) continue;
             pathStack.push(node.packagePath().path());
 
             for (ClassDeclaration decl : node.classes()) {
@@ -207,11 +210,34 @@ public class Generator {
             PathStack pathStack,
             String baseName
     ) {
+        if (statement instanceof VariableDeclarationStatement varDecl){
+            String varName = varDecl.name();
+            Expression init;
+            if (varDecl.initializer() != null){
+                init = varDecl.initializer();
+            }else {
+                init = varDecl.type().resolvedType().getDefaultExpression();
+            }
+            function.addCommand(generateExpression(
+                    init,
+                    unit,
+                    function,
+                    pathStack,
+                    new DataValueTarget(localPath(varName)),
+                    baseName+"_var_"+varName
+            ));
+        }
         if (statement instanceof ExpressionStatement expressionStatement) {
             Expression exp = expressionStatement.expression();
 
             if (exp instanceof CallExpression callExpression) {
-                function.addCommand(generateCallStatement(callExpression));
+                function.addCommand(generateCallStatement(
+                        callExpression,
+                        unit,
+                        function,
+                        pathStack,
+                        baseName + "_call"
+                ));
                 return;
             }
 
@@ -285,7 +311,7 @@ public class Generator {
                 ));
 
                 function.addCommand(
-                        new ExecuteCall(new FunctionCall(f, true))
+                        new ExecuteCall(new FunctionCall(f, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
             }
@@ -320,12 +346,12 @@ public class Generator {
                 ));
 
                 f.addCommand(
-                        new ExecuteCall(new FunctionCall(f, true))
+                        new ExecuteCall(new FunctionCall(f, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
 
                 function.addCommand(
-                        new ExecuteCall(new FunctionCall(f, true))
+                        new ExecuteCall(new FunctionCall(f, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
             }
@@ -383,44 +409,85 @@ public class Generator {
                 }
 
                 f.addCommand(
-                        new ExecuteCall(new FunctionCall(f, true))
+                        new ExecuteCall(new FunctionCall(f, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
 
                 function.addCommand(
-                        new ExecuteCall(new FunctionCall(f, true))
+                        new ExecuteCall(new FunctionCall(f, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
             }
         }
     }
 
-    private ICommandPart generateCallStatement(CallExpression callExpression) {
+    private ICommandPart generateCallStatement(
+            CallExpression callExpression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
         MethodSymbol method = callExpression.resolvedMethod();
         SnbtCompound locals = compound();
+
+        List<DelayedParam> delayedParams = new ArrayList<>();
 
         for (int i = 0; i < callExpression.arguments().size(); i++) {
             Expression param = callExpression.arguments().get(i);
             String name = method.declaration().parameters().get(i).name();
-
-            if (param instanceof StringLiteralExpression stringLiteralExpression) {
-                locals.putString(name, stringLiteralExpression.rawValue());
+            if (param instanceof NullLiteralExpression){
                 continue;
             }
+            if (param instanceof StringLiteralExpression stringLiteralExpression) {
+                locals.putString(name, stringLiteralExpression.rawValue());
+            } else if (param instanceof NumberLiteralExpression number) {
+                String raw = number.rawValue();
 
-            throw new IllegalStateException("Only string literal call arguments are supported right now");
+                if (raw.endsWith("f") || raw.endsWith("F")) {
+                    locals.put(name, floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1))));
+                } else if (raw.contains(".")) {
+                    locals.put(name, doubleNumber(Double.parseDouble(raw)));
+                } else {
+                    locals.put(name, integer(Integer.parseInt(raw)));
+                }
+            } else if (param instanceof BooleanLiteralExpression bool) {
+                locals.put(name, bool(bool.value()));
+            } else {
+                delayedParams.add(new DelayedParam(name, param));
+            }
         }
 
         SnbtCompound frame = compound()
                 .put("locals", locals)
                 .put("macro", compound());
 
-        return new MultiPart(List.of(
-                new TmpWrite(frame.toSnbt()),
-                new CreateStackFrame(),
-                new FunctionCall(method.declaration().getFunction()),
-                new PopStackFrame()
-        ));
+        List<ICommandPart> commands = new ArrayList<>();
+
+        commands.add(new TmpWrite(frame.toSnbt()));
+
+        for (DelayedParam delayed : delayedParams) {
+            commands.add(generateExpression(
+                    delayed.expression(),
+                    unit,
+                    function,
+                    pathStack,
+                    new DataValueTarget("tmp.locals." + delayed.name()),
+                    baseName + "_param_" + delayed.name()
+            ));
+        }
+
+        commands.add(new CreateStackFrame());
+        commands.add(new FunctionCall(method.declaration().getFunction()));
+        commands.add(new PopStackFrame());
+
+        return new MultiPart(commands);
+    }
+
+    private record DelayedParam(String name, Expression expression) {
+    }
+
+    private record InlineMacro(String name, Expression expression) {
     }
 
     private ICommandPart generateExpression(
@@ -448,7 +515,74 @@ public class Generator {
                     target.storeFrom(tmp)
             ));
         }
+        if (expression instanceof TStringLiteralExpression string) {
+            SnbtCompound compound = compound();
 
+            String raw = string.rawValue();
+            StringBuilder resultString = new StringBuilder();
+
+            List<InlineMacro> macros = new ArrayList<>();
+
+            int macroIndex = 0;
+            int i = 0;
+
+            while (i < raw.length()) {
+                int start = raw.indexOf("${", i);
+
+                if (start == -1) {
+                    resultString.append(raw.substring(i));
+                    break;
+                }
+
+                resultString.append(raw, i, start);
+
+                int end = raw.indexOf("}", start + 2);
+                if (end == -1) {
+                    throw new IllegalStateException("Unclosed ${ in tString: " + raw);
+                }
+
+                String inlineSource = raw.substring(start + 2, end);
+                String macroName = "m_" + macroIndex++;
+
+                Expression inlineExpression = parseInlineExpression(inlineSource);
+                macros.add(new InlineMacro(macroName, inlineExpression));
+
+                resultString.append("$(").append(macroName).append(")");
+
+                i = end + 1;
+            }
+
+            compound.put("text", string(resultString.toString()));
+
+            // tmp = { text: "... $(m_0) ...", ... }
+            function.addCommand(new TmpMacroWrite(compound.toSnbt()));
+
+            // tmp.m_X = result of ${...}
+            for (InlineMacro macro : macros) {
+                function.addCommand(generateExpression(
+                        macro.expression(),
+                        unit,
+                        function,
+                        pathStack,
+                        new DataValueTarget("storage mcs:memory tmp_macro." + macro.name()),
+                        baseName + "_tstr_" + macro.name()
+                ));
+            }
+
+            MCFunction macroFunction = unit.create(
+                    function.getNamespace(),
+                    function.getPath(),
+                    baseName + "_tstr"
+            );
+
+            ICommandPart writeResult = target.storeFrom(
+                    new StringValueTarget(resultString.toString())
+            );
+
+            macroFunction.addCommand(new MacroCommandPart(writeResult));
+
+            return new FunctionCall(macroFunction, 2);
+        }
         if (expression instanceof StringLiteralExpression string) {
             return target.storeFrom(new StringValueTarget(string.rawValue()));
         }
@@ -488,6 +622,23 @@ public class Generator {
         }
 
         throw new IllegalStateException("Unsupported expression: " + expression.getClass().getSimpleName());
+    }
+
+    private Expression parseInlineExpression(String source) {
+        CharStream input = CharStreams.fromString(source);
+
+        MCSLexer lexer = new MCSLexer(input);
+        CommonTokenStream tokens = new CommonTokenStream(lexer);
+        MCSParser parser = new MCSParser(tokens);
+
+        MCSParser.InlineExpressionContext ctx = parser.inlineExpression();
+
+        if (parser.getNumberOfSyntaxErrors() > 0) {
+            throw new IllegalStateException("Invalid inline expression in tString: " + source);
+        }
+
+        AstBuilder builder = new AstBuilder();
+        return builder.visitInlineExpression(ctx);
     }
 
     private ICommandPart generateCallExpression(
@@ -707,6 +858,14 @@ public class Generator {
             }
 
             return null;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof StringValueTarget dataValueTarget){
+                return Objects.equals(dataValueTarget.value, this.value);
+            }
+            return false;
         }
     }
 

@@ -39,7 +39,7 @@ tasks.register<JavaExec>("runMain") {
 
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("net.villagerzock.Main")
-    args = listOf("./testScripts/","--ast","-v")
+    args = listOf("./testScripts/","--ast","-v"/*,"-cp","./classpath/"*/)
 }
 
 tasks.jar {

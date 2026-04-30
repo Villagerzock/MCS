@@ -6,18 +6,19 @@ import net.villagerzock.mcfunction.MCFunction;
 public class FunctionCall implements ICommandPart {
     private final MCFunction function;
     private final boolean ignoreMacros;
+    private final boolean useTempMacros;
 
     public FunctionCall(MCFunction function) {
-        this.function = function;
-        this.ignoreMacros = false;
+        this(function,0);
     }
-    public FunctionCall(MCFunction function, boolean ignoreMacros) {
+    public FunctionCall(MCFunction function, int macroMode) {
         this.function = function;
-        this.ignoreMacros = ignoreMacros;
+        this.ignoreMacros = macroMode == 1;
+        this.useTempMacros = macroMode == 2;
     }
 
     @Override
     public String apply() {
-        return "function %2$s %3$s".formatted("mcs",function.getFullPath(),ignoreMacros ? "" : "with storage mcs:memory stack[0].macro");
+        return "function %2$s %3$s".formatted("mcs",function.getFullPath(),ignoreMacros ? "" : "with storage mcs:memory %s".formatted(useTempMacros ? "tmp_macro" : "stack[0].macro"));
     }
 }

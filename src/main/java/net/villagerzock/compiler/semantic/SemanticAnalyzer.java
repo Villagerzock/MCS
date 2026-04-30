@@ -49,13 +49,17 @@ public final class SemanticAnalyzer {
 		currentMethod = null;
 		currentScope = null;
 
-		List<ProgramNode> programs = collectAnalyzablePrograms(nodes);
+		List<ProgramNode> programs = collectProgramNodes(nodes);
 
 		collectPrograms(programs);
 		collectAllClasses();
 		collectAllMembers();
 
 		for (ProgramInfo program : programsByPackage.values()) {
+			if (program.node.isLib()) {
+				continue;
+			}
+
 			checkProgram(program);
 		}
 
@@ -69,14 +73,10 @@ public final class SemanticAnalyzer {
 		}
 	}
 
-	private List<ProgramNode> collectAnalyzablePrograms(List<? extends Node> nodes) {
+	private List<ProgramNode> collectProgramNodes(List<? extends Node> nodes) {
 		List<ProgramNode> programs = new ArrayList<>();
 
 		for (Node node : nodes) {
-			if (node instanceof ISemanticAnalyzed) {
-				continue;
-			}
-
 			if (node instanceof ProgramNode program) {
 				programs.add(program);
 			}
@@ -85,13 +85,19 @@ public final class SemanticAnalyzer {
 		return programs;
 	}
 
+	private boolean isCurrentProgramLibrary() {
+		return currentProgram != null && currentProgram.node.isLib();
+	}
+
 	private void collectPrograms(List<ProgramNode> programs) {
 		for (ProgramNode program : programs) {
 			String packageName = packageName(program);
 
 			if (programsByPackage.containsKey(packageName)) {
 				currentProgram = new ProgramInfo(packageName, program);
-				error(program, "Duplicate script package '" + packageName + "'.");
+				if (!program.isLib()) {
+					error(program, "Duplicate script package '" + packageName + "'.");
+				}
 				currentProgram = null;
 				continue;
 			}
@@ -106,11 +112,13 @@ public final class SemanticAnalyzer {
 
 			for (ClassDeclaration classDeclaration : program.node.classes()) {
 				if (program.classes.containsKey(classDeclaration.name())) {
-					error(
-							classDeclaration,
-							"Duplicate class '" + classDeclaration.name()
-									+ "' in package '" + program.packageName + "'."
-					);
+					if (!isCurrentProgramLibrary()) {
+						error(
+								classDeclaration,
+								"Duplicate class '" + classDeclaration.name()
+										+ "' in package '" + program.packageName + "'."
+						);
+					}
 					continue;
 				}
 
@@ -145,11 +153,13 @@ public final class SemanticAnalyzer {
 
 	private void collectField(ClassInfo classInfo, FieldDeclaration field) {
 		if (classInfo.fields.containsKey(field.name()) || classInfo.methods.containsKey(field.name())) {
-			error(
-					field,
-					"Duplicate member '" + field.name()
-							+ "' in class '" + classInfo.qualifiedName() + "'."
-			);
+			if (!isCurrentProgramLibrary()) {
+				error(
+						field,
+						"Duplicate member '" + field.name()
+								+ "' in class '" + classInfo.qualifiedName() + "'."
+				);
+			}
 			return;
 		}
 
@@ -163,20 +173,24 @@ public final class SemanticAnalyzer {
 
 	private void collectMethod(ClassInfo classInfo, MethodDeclaration method) {
 		if (classInfo.fields.containsKey(method.name()) || classInfo.methods.containsKey(method.name())) {
-			error(
-					method,
-					"Duplicate member '" + method.name()
-							+ "' in class '" + classInfo.qualifiedName() + "'."
-			);
+			if (!isCurrentProgramLibrary()) {
+				error(
+						method,
+						"Duplicate member '" + method.name()
+								+ "' in class '" + classInfo.qualifiedName() + "'."
+				);
+			}
 			return;
 		}
 
-		if (method.isNative() && method.nativeBody() == null) {
-			error(method, "Native method '" + method.name() + "' must have a native body.");
-		}
+		if (!isCurrentProgramLibrary()) {
+			if (method.isNative() && method.nativeBody() == null) {
+				error(method, "Native method '" + method.name() + "' must have a native body.");
+			}
 
-		if (!method.isNative() && method.body() == null) {
-			error(method, "Method '" + method.name() + "' must have a body.");
+			if (!method.isNative() && method.body() == null) {
+				error(method, "Method '" + method.name() + "' must have a body.");
+			}
 		}
 
 		List<Symbol> parameters = new ArrayList<>();
@@ -184,11 +198,13 @@ public final class SemanticAnalyzer {
 
 		for (ParameterDeclaration parameter : method.parameters()) {
 			if (!parameterNames.add(parameter.name())) {
-				error(
-						parameter,
-						"Duplicate parameter '" + parameter.name()
-								+ "' in method '" + method.name() + "'."
-				);
+				if (!isCurrentProgramLibrary()) {
+					error(
+							parameter,
+							"Duplicate parameter '" + parameter.name()
+									+ "' in method '" + method.name() + "'."
+					);
+				}
 				continue;
 			}
 
@@ -215,6 +231,10 @@ public final class SemanticAnalyzer {
 	}
 
 	private void checkProgram(ProgramInfo program) {
+		if (program.node.isLib()) {
+			return;
+		}
+
 		currentProgram = program;
 		currentVisibleClasses = buildVisibleClasses(program);
 		currentVisibleStaticMethods = buildVisibleStaticMethods(program);
@@ -702,6 +722,8 @@ public final class SemanticAnalyzer {
 			result = SemanticType.INT;
 		} else if (expression instanceof StringLiteralExpression) {
 			result = SemanticType.STRING;
+		} else if (expression instanceof TStringLiteralExpression){
+			result = SemanticType.STRING;
 		} else if (expression instanceof BooleanLiteralExpression) {
 			result = SemanticType.BOOLEAN;
 		} else if (expression instanceof IdentifierExpression identifier) {
@@ -1158,6 +1180,10 @@ public final class SemanticAnalyzer {
 		}
 
 		if (expression instanceof StringLiteralExpression) {
+			return "<string>";
+		}
+
+		if (expression instanceof TStringLiteralExpression) {
 			return "<string>";
 		}
 

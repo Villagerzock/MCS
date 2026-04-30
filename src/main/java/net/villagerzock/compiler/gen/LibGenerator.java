@@ -11,12 +11,13 @@ import java.nio.file.Path;
 import java.util.List;
 
 public class LibGenerator {
-    public record JsonFile(Path path, JsonObject jsonElement){}
+    public record JsonFile(Path path, JsonArray jsonElement){}
     public JsonFile[] generate(List<ProgramNode> nodes){
+        nodes = nodes.stream().filter((node)->!node.isLib()).toList();
         JsonFile[] files = new JsonFile[nodes.size()];
         for(int i = 0; i < files.length; i++){
             ProgramNode node = nodes.get(i);
-            JsonObject root = null;
+            JsonArray root = null;
             Path path = Path.of("lib").resolve(node.packagePath().namespace()).resolve(node.packagePath().path()+".json");
             JsonFile jsonFile = null;
             for (JsonFile file : files){
@@ -26,13 +27,15 @@ public class LibGenerator {
                 }
             }
             if (jsonFile == null){
-                root = new JsonObject();
+                root = new JsonArray();
                 jsonFile = new JsonFile(path, root);
             }
             files[i] = jsonFile;
 
             for (ClassDeclaration declaration : node.classes()){
-                addClass(declaration,root);
+                JsonObject classObject = new JsonObject();
+                addClass(declaration,classObject);
+                root.add(classObject);
             }
         }
         return files;
@@ -61,6 +64,7 @@ public class LibGenerator {
     private void addMethod(MethodDeclaration methodDeclaration, JsonObject json) {
         json.addProperty("name", methodDeclaration.name());
         json.addProperty("kind", "method");
+        json.addProperty("ref",methodDeclaration.getFunction().getFullPath());
         JsonArray parameters = new JsonArray();
         for (ParameterDeclaration parameter : methodDeclaration.parameters()){
             JsonObject param = new JsonObject();

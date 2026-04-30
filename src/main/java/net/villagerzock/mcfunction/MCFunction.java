@@ -36,6 +36,9 @@ public class MCFunction {
         throw new IllegalStateException("Trying to read Function name when Function before Semantic Resolving");
     }
 
+    public static String removeEmptyLines(String input) {
+        return input.replaceAll("(?m)^[ \\t]*\\r?\\n", "");
+    }
     @Override
     public String toString() {
         StringBuilder builder = new StringBuilder();
@@ -46,7 +49,7 @@ public class MCFunction {
             builder.append(p.apply());
             builder.append("\n");
         }
-        return builder.toString();
+        return removeEmptyLines(builder.toString());
     }
 
     public void addCommand(ICommandPart part){

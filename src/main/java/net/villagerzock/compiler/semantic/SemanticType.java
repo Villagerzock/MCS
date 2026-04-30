@@ -1,32 +1,36 @@
 package net.villagerzock.compiler.semantic;
 
+import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.type.TypeNode;
 
 import java.util.Locale;
 import java.util.Objects;
 
 public final class SemanticType {
-	public static final SemanticType INT = new SemanticType("int");
-	public static final SemanticType STRING = new SemanticType("string");
-	public static final SemanticType BOOLEAN = new SemanticType("boolean");
-	public static final SemanticType VOID = new SemanticType("function");
-	public static final SemanticType UNKNOWN = new SemanticType("<unknown>");
+	public static final SemanticType INT = new SemanticType("int",new NumberLiteralExpression("0"));
+	public static final SemanticType STRING = new SemanticType("string",new StringLiteralExpression(""));
+	public static final SemanticType BOOLEAN = new SemanticType("boolean", new BooleanLiteralExpression(false));
+	public static final SemanticType VOID = new SemanticType("function", new NullLiteralExpression());
+	public static final SemanticType UNKNOWN = new SemanticType("<unknown>", new NullLiteralExpression());
 
 	private final String name;
     private String namespace;
     private String path;
     private final boolean isBuiltin;
+	private final Expression defaultExpression;
 
-	private SemanticType(String name) {
+	private SemanticType(String name, Expression defaultExpression) {
 		this.name = name;
+        this.defaultExpression = defaultExpression;
         this.namespace = null;
         this.path = null;
         this.isBuiltin = true;
 	}
-    private SemanticType(String name, String namespace, String path) {
+    private SemanticType(String name, String namespace, String path, Expression defaultExpression) {
         this.name = name;
         this.namespace = namespace;
         this.path = path;
+        this.defaultExpression = defaultExpression;
         this.isBuiltin = false;
     }
 
@@ -48,8 +52,12 @@ public final class SemanticType {
 			case "string" -> STRING;
 			case "bool", "boolean" -> BOOLEAN;
 			case "function", "void" -> VOID;
-			default -> new SemanticType(rawName.trim(),null,null);
+			default -> new SemanticType(rawName.trim(),null,null,new NullLiteralExpression());
 		};
+	}
+
+	public Expression getDefaultExpression(){
+		return defaultExpression;
 	}
 
 	public String name() {
