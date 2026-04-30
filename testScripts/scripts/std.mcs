@@ -6,10 +6,26 @@ tellraw @a ${s}
     }
 
     native function summon(string type, string location,string data){
-summon type ${type} ${location} ${data}
+summon ${type} ${location} ${data}
     }
     native int invoke(string command){
 ${command}
     }
-
+    native function allocate(){
+execute if data storage mcs:memory free[0] run return run function std:std/std/reallocate_native
+return run function std:std/std/new_allocate_native
+    }
+    native function newAllocate(){
+execute store result storage mcs:memory tmp int 1 run data get storage mcs:memory heap
+data modify storage mcs:memory heap append value {}
+return run data get storage mcs:memory tmp
+    }
+    native function reallocate(){
+data modify storage mcs:memory tmp from storage mcs:memory free[0]
+data remove storage mcs:memory free[0]
+return run data get storage mcs:memory tmp
+    }
+    native function free(int id){
+data modify storage mcs:memory free append value ${id}
+    }
 }

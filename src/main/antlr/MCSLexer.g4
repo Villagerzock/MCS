@@ -20,7 +20,8 @@ ELSE : 'else';
 RETURN : 'return';
 TRUE : 'true';
 FALSE : 'false';
-
+CONSTRUCTOR : 'constructor';
+NEW : 'new';
 NATIVE_BLOCK_START
 	: {expectNativeBlock}? '{'
 		{

@@ -45,10 +45,10 @@ public class MCFunctionUnit {
             if (dataMap.containsKey(f.getOriginalFullPath())){
                 AnalyzeData data = dataMap.get(f.getOriginalFullPath());
                 if (data.wasFirst()){
-                    data.first.updateFinalName(data.first.getOriginalName() + "$0");
+                    data.first.updateFinalName(data.first.getOriginalName() + "-0");
                 }
                 data.count++;
-                f.updateFinalName(f.getOriginalName() + "$" + data.count);
+                f.updateFinalName(f.getOriginalName() + "-" + data.count);
 
             }else {
                 dataMap.put(f.getOriginalFullPath(),new AnalyzeData(f));

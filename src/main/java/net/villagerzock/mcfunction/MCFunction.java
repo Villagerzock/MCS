@@ -11,6 +11,7 @@ public class MCFunction {
     private final String namespace;
     private String finalName;
     private final List<ICommandPart> commands = new ArrayList<>();
+    private boolean usesMacros = false;
 
     public MCFunction(String namespace, String path, String name) {
         this.path = toSnakeCase(Main.runtimeData.obfuscate ? "" : path);
@@ -58,6 +59,14 @@ public class MCFunction {
 
     public String getFullPath() {
         return "%s:%s%s".formatted(namespace,path,getName());
+    }
+
+    public void setUsesMacros(boolean usesMacros) {
+        this.usesMacros = usesMacros;
+    }
+
+    public boolean usesMacros() {
+        return usesMacros;
     }
 
     public String getNamespace() {

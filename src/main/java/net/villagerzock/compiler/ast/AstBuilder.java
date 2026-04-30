@@ -86,6 +86,12 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         if (ctx.fieldDecl() != null) {
             return visit(ctx.fieldDecl());
         }
+        if (ctx.classDecl() != null){
+            return visit(ctx.classDecl());
+        }
+        if (ctx.constructorDecl() != null){
+            return visit(ctx.constructorDecl());
+        }
 
         return visit(ctx.methodDecl());
     }
@@ -100,6 +106,11 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
                 : null;
 
         return new FieldDeclaration(type, name, initializer);
+    }
+
+    @Override
+    public Node visitConstructorDecl(MCSParser.ConstructorDeclContext ctx) {
+        return new ConstructorDeclaration(visitParameters(ctx.parameterList()), (BlockStatement) visit(ctx.block()));
     }
 
     @Override
@@ -175,6 +186,8 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
         return parameters;
     }
+
+
 
     private Set<MethodModifier> visitMethodModifiers(List<MCSParser.MethodModifierContext> contexts) {
         EnumSet<MethodModifier> modifiers = EnumSet.noneOf(MethodModifier.class);
@@ -530,11 +543,20 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
             return new BooleanLiteralExpression(false);
         }
 
+        if (ctx.newExpression() != null){
+            return visit(ctx.newExpression());
+        }
+
         if (ctx.IDENTIFIER() != null) {
             return new IdentifierExpression(ctx.IDENTIFIER().getText());
         }
 
         return new GroupExpression((Expression) visit(ctx.expression()));
+    }
+
+    @Override
+    public Node visitNewExpression(MCSParser.NewExpressionContext ctx) {
+        return new NewExpression(ctx.IDENTIFIER().getText(),visitArguments(ctx.argumentList()));
     }
 
     private List<Expression> visitArguments(MCSParser.ArgumentListContext ctx) {

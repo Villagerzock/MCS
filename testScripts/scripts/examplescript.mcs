@@ -1,14 +1,18 @@
 package example:test;
 
 class Main {
+    class Test {
+        constructor(){}
+    }
     static function foo() {
         summon("breeze_wind_charge","~ ~ ~","");
         summon("breeze_wind_charge","~ ~ ~","");
-        string test = "test";
         for (int i = 0; i< 10; i++){
             print($"Hi i is ${i}");
         }
         print("Hi");
+
+        Test test = new Test();
     }
     function init(){
         foo();

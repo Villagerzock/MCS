@@ -23,6 +23,9 @@ public final class SemanticAnalyzer {
 
 	private ClassInfo currentClass;
 	private MethodSymbol currentMethod;
+	private ConstructorSymbol currentConstructor;
+	private String currentCallableName;
+	private SemanticType currentReturnType;
 	private Scope currentScope;
 
 	private SemanticType createSemanticType(net.villagerzock.compiler.ast.type.TypeNode typeNode) {
@@ -39,6 +42,17 @@ public final class SemanticAnalyzer {
 		return type;
 	}
 
+	private SemanticType createClassSemanticType(ClassInfo classInfo) {
+		SemanticType type = SemanticType.fromName(classInfo.declaration.name());
+
+		if (classInfo.owner.node.packagePath() != null) {
+			type.setNamespace(classInfo.owner.node.packagePath().namespace());
+			type.setPath(classInfo.owner.node.packagePath().path());
+		}
+
+		return type;
+	}
+
 	public List<SemanticDiagnostic> analyze(List<? extends Node> nodes) {
 		diagnostics.clear();
 		programsByPackage.clear();
@@ -47,6 +61,9 @@ public final class SemanticAnalyzer {
 		currentVisibleStaticMethods = Map.of();
 		currentClass = null;
 		currentMethod = null;
+		currentConstructor = null;
+		currentCallableName = null;
+		currentReturnType = null;
 		currentScope = null;
 
 		List<ProgramNode> programs = collectProgramNodes(nodes);
@@ -111,22 +128,39 @@ public final class SemanticAnalyzer {
 			currentProgram = program;
 
 			for (ClassDeclaration classDeclaration : program.node.classes()) {
-				if (program.classes.containsKey(classDeclaration.name())) {
-					if (!isCurrentProgramLibrary()) {
-						error(
-								classDeclaration,
-								"Duplicate class '" + classDeclaration.name()
-										+ "' in package '" + program.packageName + "'."
-						);
-					}
-					continue;
-				}
-
-				program.classes.put(classDeclaration.name(), new ClassInfo(program, classDeclaration));
+				collectClass(program, null, classDeclaration);
 			}
 		}
 
 		currentProgram = null;
+	}
+
+	private void collectClass(ProgramInfo program, ClassInfo parent, ClassDeclaration classDeclaration) {
+		Map<String, ClassInfo> targetMap = parent == null
+				? program.classes
+				: parent.nestedClasses;
+
+		if (targetMap.containsKey(classDeclaration.name())) {
+			if (!isCurrentProgramLibrary()) {
+				error(
+						classDeclaration,
+						"Duplicate class '" + classDeclaration.name()
+								+ "' in " + (parent == null
+								? "package '" + program.packageName + "'"
+								: "class '" + parent.qualifiedName() + "'") + "."
+				);
+			}
+			return;
+		}
+
+		ClassInfo classInfo = new ClassInfo(program, parent, classDeclaration);
+		targetMap.put(classDeclaration.name(), classInfo);
+
+		for (Declaration member : classDeclaration.members()) {
+			if (member instanceof ClassDeclaration nestedClass) {
+				collectClass(program, classInfo, nestedClass);
+			}
+		}
 	}
 
 	private void collectAllMembers() {
@@ -134,21 +168,47 @@ public final class SemanticAnalyzer {
 			currentProgram = program;
 
 			for (ClassInfo classInfo : program.classes.values()) {
-				currentClass = classInfo;
-
-				for (Declaration member : classInfo.declaration.members()) {
-					if (member instanceof FieldDeclaration field) {
-						collectField(classInfo, field);
-					} else if (member instanceof MethodDeclaration method) {
-						collectMethod(classInfo, method);
-					}
-				}
-
-				currentClass = null;
+				collectMembersRecursive(classInfo);
 			}
 		}
 
 		currentProgram = null;
+	}
+
+	private void collectMembersRecursive(ClassInfo classInfo) {
+		currentClass = classInfo;
+
+		for (Declaration member : classInfo.declaration.members()) {
+			if (member instanceof FieldDeclaration field) {
+				collectField(classInfo, field);
+			} else if (member instanceof MethodDeclaration method) {
+				collectMethod(classInfo, method);
+			} else if (member instanceof ConstructorDeclaration constructor) {
+				collectConstructor(classInfo, constructor);
+			}
+		}
+
+		if (classInfo.constructors.isEmpty()) {
+			addDefaultConstructor(classInfo);
+		}
+
+		for (ClassInfo nestedClass : classInfo.nestedClasses.values()) {
+			collectMembersRecursive(nestedClass);
+		}
+
+		currentClass = null;
+	}
+
+	private void addDefaultConstructor(ClassInfo classInfo) {
+		ConstructorDeclaration declaration = new ConstructorDeclaration(
+				List.of(),
+				new BlockStatement(List.of(), SourceRange.UNKNOWN),
+				SourceRange.UNKNOWN
+		);
+
+		ConstructorSymbol symbol = new ConstructorSymbol(List.of(), declaration);
+		declaration.setResolvedConstructorSymbol(symbol);
+		classInfo.constructors.add(symbol);
 	}
 
 	private void collectField(ClassInfo classInfo, FieldDeclaration field) {
@@ -169,6 +229,82 @@ public final class SemanticAnalyzer {
 		field.setResolvedSymbol(symbol);
 
 		classInfo.fields.put(field.name(), symbol);
+	}
+
+	private void collectConstructor(ClassInfo classInfo, ConstructorDeclaration constructor) {
+		if (!isCurrentProgramLibrary() && constructor.body() == null) {
+			error(constructor, "Constructor in class '" + classInfo.qualifiedName() + "' must have a body.");
+		}
+
+		List<Symbol> parameters = new ArrayList<>();
+		Set<String> parameterNames = new HashSet<>();
+
+		for (ParameterDeclaration parameter : constructor.parameters()) {
+			if (!parameterNames.add(parameter.name())) {
+				if (!isCurrentProgramLibrary()) {
+					error(
+							parameter,
+							"Duplicate parameter '" + parameter.name()
+									+ "' in constructor of class '" + classInfo.qualifiedName() + "'."
+					);
+				}
+				continue;
+			}
+
+			SemanticType parameterType = createSemanticType(parameter.type());
+			Symbol parameterSymbol = new Symbol(
+					parameter.name(),
+					parameterType,
+					SymbolKind.PARAMETER,
+					parameter
+			);
+			parameter.setResolvedSymbol(parameterSymbol);
+			parameters.add(parameterSymbol);
+		}
+
+		ConstructorSymbol constructorSymbol = new ConstructorSymbol(
+				List.copyOf(parameters),
+				constructor
+		);
+
+		constructor.setResolvedConstructorSymbol(constructorSymbol);
+
+		if (hasSameConstructorSignature(classInfo, constructorSymbol)) {
+			if (!isCurrentProgramLibrary()) {
+				error(
+						constructor,
+						"Duplicate constructor in class '" + classInfo.qualifiedName()
+								+ "' with same parameter types."
+				);
+			}
+			return;
+		}
+
+		classInfo.constructors.add(constructorSymbol);
+	}
+
+	private boolean hasSameConstructorSignature(ClassInfo classInfo, ConstructorSymbol constructor) {
+		for (ConstructorSymbol existing : classInfo.constructors) {
+			if (sameParameterTypes(existing.parameters(), constructor.parameters())) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private boolean sameParameterTypes(List<Symbol> left, List<Symbol> right) {
+		if (left.size() != right.size()) {
+			return false;
+		}
+
+		for (int i = 0; i < left.size(); i++) {
+			if (!Objects.equals(left.get(i).type(), right.get(i).type())) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	private void collectMethod(ClassInfo classInfo, MethodDeclaration method) {
@@ -242,22 +378,37 @@ public final class SemanticAnalyzer {
 		checkTypeDeclarations(program);
 
 		for (ClassInfo classInfo : program.classes.values()) {
-			currentClass = classInfo;
-
-			checkFields(classInfo);
-
-			for (MethodSymbol method : classInfo.methods.values()) {
-				checkMethod(method);
-			}
-
-			currentClass = null;
+			checkClassRecursive(classInfo);
 		}
 
 		currentProgram = null;
 		currentVisibleClasses = Map.of();
 		currentVisibleStaticMethods = Map.of();
 		currentMethod = null;
+		currentConstructor = null;
+		currentCallableName = null;
+		currentReturnType = null;
 		currentScope = null;
+	}
+
+	private void checkClassRecursive(ClassInfo classInfo) {
+		currentClass = classInfo;
+
+		checkFields(classInfo);
+
+		for (ConstructorSymbol constructor : classInfo.constructors) {
+			checkConstructor(constructor);
+		}
+
+		for (MethodSymbol method : classInfo.methods.values()) {
+			checkMethod(method);
+		}
+
+		for (ClassInfo nestedClass : classInfo.nestedClasses.values()) {
+			checkClassRecursive(nestedClass);
+		}
+
+		currentClass = null;
 	}
 
 	private Map<String, ClassInfo> buildVisibleClasses(ProgramInfo program) {
@@ -268,20 +419,41 @@ public final class SemanticAnalyzer {
 		}
 
 		for (ClassInfo classInfo : program.classes.values()) {
-			ClassInfo conflict = visible.put(classInfo.declaration.name(), classInfo);
+			addVisibleClass(visible, classInfo.declaration, classInfo);
 
-			if (conflict != null && conflict != classInfo) {
-				error(
-						classInfo.declaration,
-						"Class name conflict for '" + classInfo.declaration.name()
-								+ "'. Current package '" + program.packageName
-								+ "' conflicts with imported class from package '"
-								+ conflict.owner.packageName + "'."
-				);
+			for (ClassInfo nestedClass : classInfo.nestedClasses.values()) {
+				addNestedVisibleClassesForCurrentProgram(visible, nestedClass);
 			}
 		}
 
+		addStaticImportedClasses(visible, program, STD_STATIC_IMPORT);
+
+		for (StaticImportDeclaration staticImportDeclaration : program.node.staticImports()) {
+			addStaticImportedClasses(visible, program, staticImportDeclaration);
+		}
+
 		return visible;
+	}
+
+	private void addNestedVisibleClassesForCurrentProgram(Map<String, ClassInfo> visible, ClassInfo classInfo) {
+		addVisibleClass(visible, classInfo.declaration, classInfo);
+
+		for (ClassInfo nestedClass : classInfo.nestedClasses.values()) {
+			addNestedVisibleClassesForCurrentProgram(visible, nestedClass);
+		}
+	}
+
+	private void addVisibleClass(Map<String, ClassInfo> visible, Node errorNode, ClassInfo classInfo) {
+		ClassInfo conflict = visible.putIfAbsent(classInfo.declaration.name(), classInfo);
+
+		if (conflict != null && conflict != classInfo) {
+			error(
+					errorNode,
+					"Class name conflict for '" + classInfo.declaration.name()
+							+ "'. Class '" + classInfo.qualifiedName()
+							+ "' conflicts with class '" + conflict.qualifiedName() + "'."
+			);
+		}
 	}
 
 	private Map<String, MethodSymbol> buildVisibleStaticMethods(ProgramInfo program) {
@@ -319,25 +491,14 @@ public final class SemanticAnalyzer {
 			return;
 		}
 
-		String className = last;
-		String packageName = toPackageName(path.namespace(), segments.subList(0, segments.size() - 1));
-		ProgramInfo imported = programsByPackage.get(packageName);
-
-		if (imported == null) {
-			error(
-					importDeclaration,
-					"Unknown import package '" + packageName
-							+ "' while checking package '" + current.packageName + "'."
-			);
-			return;
-		}
-
-		ClassInfo importedClass = imported.classes.get(className);
+		ClassInfo importedClass = resolveClassPath(path.namespace(), segments);
 		if (importedClass == null) {
+			String packageName = toPackageName(path.namespace(), segments.subList(0, Math.max(0, segments.size() - 1)));
 			error(
 					importDeclaration,
-					"Unknown imported class '" + className
-							+ "' in package '" + packageName + "'."
+					"Unknown imported class '" + last
+							+ "' in import '" + importName(importDeclaration)
+							+ "' while checking package '" + current.packageName + "'."
 			);
 			return;
 		}
@@ -347,10 +508,48 @@ public final class SemanticAnalyzer {
 			error(
 					importDeclaration,
 					"Imported class name conflict for '" + importedClass.declaration.name()
-							+ "'. Package '" + imported.packageName
-							+ "' conflicts with package '" + conflict.owner.packageName + "'."
+							+ "'. Class '" + importedClass.qualifiedName()
+							+ "' conflicts with class '" + conflict.qualifiedName() + "'."
 			);
 		}
+	}
+
+	private ClassInfo resolveClassPath(String namespace, List<String> segments) {
+		for (int packageEnd = segments.size() - 1; packageEnd >= 0; packageEnd--) {
+			String packageName = toPackageName(namespace, segments.subList(0, packageEnd));
+			ProgramInfo program = programsByPackage.get(packageName);
+
+			if (program == null) {
+				continue;
+			}
+
+			ClassInfo classInfo = resolveClassPathInProgram(program, segments.subList(packageEnd, segments.size()));
+			if (classInfo != null) {
+				return classInfo;
+			}
+		}
+
+		return null;
+	}
+
+	private ClassInfo resolveClassPathInProgram(ProgramInfo program, List<String> classPath) {
+		if (classPath.isEmpty()) {
+			return null;
+		}
+
+		ClassInfo current = program.classes.get(classPath.get(0));
+		if (current == null) {
+			return null;
+		}
+
+		for (int i = 1; i < classPath.size(); i++) {
+			current = current.nestedClasses.get(classPath.get(i));
+			if (current == null) {
+				return null;
+			}
+		}
+
+		return current;
 	}
 
 	private void addImportedPackageClasses(
@@ -377,10 +576,69 @@ public final class SemanticAnalyzer {
 				error(
 						errorNode,
 						"Imported class name conflict for '" + importedClass.declaration.name()
-								+ "'. Package '" + imported.packageName
-								+ "' conflicts with package '" + conflict.owner.packageName + "'."
+								+ "'. Class '" + importedClass.qualifiedName()
+								+ "' conflicts with class '" + conflict.qualifiedName() + "'."
 				);
 			}
+		}
+	}
+
+	private void addStaticImportedClasses(
+			Map<String, ClassInfo> visible,
+			ProgramInfo current,
+			StaticImportDeclaration staticImportDeclaration
+	) {
+		QualifiedPathNode path = staticImportDeclaration.path();
+		if (path == null) {
+			return;
+		}
+
+		List<String> segments = path.segments();
+		if (segments.size() < 2) {
+			error(staticImportDeclaration, "Invalid static import '" + staticImportName(staticImportDeclaration) + "'.");
+			return;
+		}
+
+		String memberName = segments.get(segments.size() - 1);
+		ClassInfo importedClass = resolveClassPath(path.namespace(), segments.subList(0, segments.size() - 1));
+
+		if (importedClass == null) {
+			error(
+					staticImportDeclaration,
+					"Unknown static import class path in '" + staticImportName(staticImportDeclaration) + "'."
+			);
+			return;
+		}
+
+		if ("*".equals(memberName)) {
+			for (ClassInfo nestedClass : importedClass.nestedClasses.values()) {
+				ClassInfo conflict = visible.putIfAbsent(nestedClass.declaration.name(), nestedClass);
+
+				if (conflict != null && conflict != nestedClass) {
+					error(
+							staticImportDeclaration,
+							"Static import class conflict for '" + nestedClass.declaration.name()
+									+ "'. Class '" + nestedClass.qualifiedName()
+									+ "' conflicts with class '" + conflict.qualifiedName() + "'."
+					);
+				}
+			}
+			return;
+		}
+
+		ClassInfo nestedClass = importedClass.nestedClasses.get(memberName);
+		if (nestedClass == null) {
+			return;
+		}
+
+		ClassInfo conflict = visible.putIfAbsent(nestedClass.declaration.name(), nestedClass);
+		if (conflict != null && conflict != nestedClass) {
+			error(
+					staticImportDeclaration,
+					"Static import class conflict for '" + nestedClass.declaration.name()
+							+ "'. Class '" + nestedClass.qualifiedName()
+							+ "' conflicts with class '" + conflict.qualifiedName() + "'."
+			);
 		}
 	}
 
@@ -401,25 +659,12 @@ public final class SemanticAnalyzer {
 		}
 
 		String memberName = segments.get(segments.size() - 1);
-		String className = segments.get(segments.size() - 2);
-		String packageName = toPackageName(path.namespace(), segments.subList(0, segments.size() - 2));
+		ClassInfo importedClass = resolveClassPath(path.namespace(), segments.subList(0, segments.size() - 1));
 
-		ProgramInfo imported = programsByPackage.get(packageName);
-		if (imported == null) {
-			error(
-					staticImportDeclaration,
-					"Unknown static import package '" + packageName
-							+ "' while checking package '" + current.packageName + "'."
-			);
-			return;
-		}
-
-		ClassInfo importedClass = imported.classes.get(className);
 		if (importedClass == null) {
 			error(
 					staticImportDeclaration,
-					"Unknown static import class '" + className
-							+ "' in package '" + packageName + "'."
+					"Unknown static import class path in '" + staticImportName(staticImportDeclaration) + "'."
 			);
 			return;
 		}
@@ -433,9 +678,14 @@ public final class SemanticAnalyzer {
 
 		MethodSymbol method = importedClass.methods.get(memberName);
 		if (method == null) {
+			ClassInfo nestedClass = importedClass.nestedClasses.get(memberName);
+			if (nestedClass != null) {
+				return;
+			}
+
 			error(
 					staticImportDeclaration,
-					"Unknown static imported method '" + memberName
+					"Unknown static imported member '" + memberName
 							+ "' on class '" + importedClass.qualifiedName() + "'."
 			);
 			return;
@@ -464,26 +714,44 @@ public final class SemanticAnalyzer {
 
 	private void checkTypeDeclarations(ProgramInfo program) {
 		for (ClassInfo classInfo : program.classes.values()) {
-			currentClass = classInfo;
-
-			for (Symbol field : classInfo.fields.values()) {
-				checkKnownType(((FieldDeclaration) field.declaration()).type(), field.type(), "field '" + field.name() + "'");
-			}
-
-			for (MethodSymbol method : classInfo.methods.values()) {
-				checkKnownType(method.declaration().returnType(), method.returnType(), "return type of method '" + method.name() + "'");
-
-				for (Symbol parameter : method.parameters()) {
-					checkKnownType(
-							((ParameterDeclaration) parameter.declaration()).type(),
-							parameter.type(),
-							"parameter '" + parameter.name() + "' of method '" + method.name() + "'"
-					);
-				}
-			}
-
-			currentClass = null;
+			checkTypeDeclarationsRecursive(classInfo);
 		}
+	}
+
+	private void checkTypeDeclarationsRecursive(ClassInfo classInfo) {
+		currentClass = classInfo;
+
+		for (Symbol field : classInfo.fields.values()) {
+			checkKnownType(((FieldDeclaration) field.declaration()).type(), field.type(), "field '" + field.name() + "'");
+		}
+
+		for (ConstructorSymbol constructor : classInfo.constructors) {
+			for (Symbol parameter : constructor.parameters()) {
+				checkKnownType(
+						((ParameterDeclaration) parameter.declaration()).type(),
+						parameter.type(),
+						"parameter '" + parameter.name() + "' of constructor in class '" + classInfo.qualifiedName() + "'"
+				);
+			}
+		}
+
+		for (MethodSymbol method : classInfo.methods.values()) {
+			checkKnownType(method.declaration().returnType(), method.returnType(), "return type of method '" + method.name() + "'");
+
+			for (Symbol parameter : method.parameters()) {
+				checkKnownType(
+						((ParameterDeclaration) parameter.declaration()).type(),
+						parameter.type(),
+						"parameter '" + parameter.name() + "' of method '" + method.name() + "'"
+				);
+			}
+		}
+
+		for (ClassInfo nestedClass : classInfo.nestedClasses.values()) {
+			checkTypeDeclarationsRecursive(nestedClass);
+		}
+
+		currentClass = null;
 	}
 
 	private void checkFields(ClassInfo classInfo) {
@@ -525,8 +793,40 @@ public final class SemanticAnalyzer {
 		return scope;
 	}
 
+	private void checkConstructor(ConstructorSymbol constructor) {
+		currentMethod = null;
+		currentConstructor = constructor;
+		currentCallableName = currentClass.declaration.name();
+		currentReturnType = SemanticType.VOID;
+		currentScope = fieldScope(currentClass);
+
+		for (Symbol parameter : constructor.parameters()) {
+			currentScope.define(parameter);
+		}
+
+		ConstructorDeclaration declaration = constructor.declaration();
+		if (declaration.body() == null) {
+			error(declaration, "Constructor in class '" + currentClass.qualifiedName() + "' has no body.");
+			currentConstructor = null;
+			currentCallableName = null;
+			currentReturnType = null;
+			currentScope = null;
+			return;
+		}
+
+		checkBlock(declaration.body(), false);
+
+		currentConstructor = null;
+		currentCallableName = null;
+		currentReturnType = null;
+		currentScope = null;
+	}
+
 	private void checkMethod(MethodSymbol method) {
 		currentMethod = method;
+		currentConstructor = null;
+		currentCallableName = method.name();
+		currentReturnType = method.returnType();
 		currentScope = fieldScope(currentClass);
 
 		for (Symbol parameter : method.parameters()) {
@@ -543,6 +843,8 @@ public final class SemanticAnalyzer {
 			}
 
 			currentMethod = null;
+			currentCallableName = null;
+			currentReturnType = null;
 			currentScope = null;
 			return;
 		}
@@ -550,6 +852,8 @@ public final class SemanticAnalyzer {
 		if (declaration.body() == null) {
 			error(declaration, "Method '" + declaration.name() + "' has no body.");
 			currentMethod = null;
+			currentCallableName = null;
+			currentReturnType = null;
 			currentScope = null;
 			return;
 		}
@@ -557,6 +861,8 @@ public final class SemanticAnalyzer {
 		checkBlock(declaration.body(), false);
 
 		currentMethod = null;
+		currentCallableName = null;
+		currentReturnType = null;
 		currentScope = null;
 	}
 
@@ -683,21 +989,25 @@ public final class SemanticAnalyzer {
 	}
 
 	private void checkReturn(ReturnStatement statement) {
-		SemanticType expected = currentMethod == null
+		SemanticType expected = currentReturnType == null
 				? SemanticType.UNKNOWN
-				: currentMethod.returnType();
+				: currentReturnType;
+
+		String callableName = currentCallableName == null
+				? "<unknown>"
+				: currentCallableName;
 
 		SemanticType actual = statement.value() == null
 				? SemanticType.VOID
 				: checkExpression(statement.value());
 
 		if (expected.isVoid() && statement.value() != null) {
-			error(statement, "Method '" + currentMethod.name() + "' does not return a value.");
+			error(statement, "Callable '" + callableName + "' does not return a value.");
 			return;
 		}
 
 		if (!expected.isVoid() && statement.value() == null) {
-			error(statement, "Method '" + currentMethod.name() + "' must return '" + expected + "'.");
+			error(statement, "Callable '" + callableName + "' must return '" + expected + "'.");
 			return;
 		}
 
@@ -705,7 +1015,7 @@ public final class SemanticAnalyzer {
 			error(
 					statement.value(),
 					"Cannot return '" + actual
-							+ "' from method '" + currentMethod.name()
+							+ "' from callable '" + callableName
 							+ "' with return type '" + expected + "'."
 			);
 		}
@@ -726,6 +1036,8 @@ public final class SemanticAnalyzer {
 			result = SemanticType.STRING;
 		} else if (expression instanceof BooleanLiteralExpression) {
 			result = SemanticType.BOOLEAN;
+		} else if (expression instanceof NewExpression newExpression) {
+			result = checkNewExpression(newExpression);
 		} else if (expression instanceof IdentifierExpression identifier) {
 			Symbol symbol = currentScope.resolve(identifier.name());
 
@@ -757,6 +1069,92 @@ public final class SemanticAnalyzer {
 
 		expression.setResolvedType(result);
 		return result;
+	}
+
+
+	private SemanticType checkNewExpression(NewExpression expression) {
+		ClassInfo classInfo = resolveClassByName(expression.typeName());
+
+		for (Expression argument : expression.arguments()) {
+			checkExpression(argument);
+		}
+
+		if (classInfo == null) {
+			error(expression, "Unknown class '" + expression.typeName() + "' used in new expression.");
+			return SemanticType.UNKNOWN;
+		}
+
+		ConstructorSymbol constructor = resolveConstructor(classInfo, expression.arguments());
+		if (constructor == null) {
+			error(
+					expression,
+					"No matching constructor found for class '" + expression.typeName()
+							+ "' with " + expression.arguments().size() + " argument(s)."
+			);
+			return createClassSemanticType(classInfo);
+		}
+
+		expression.setResolvedConstructorSymbol(constructor);
+		return createClassSemanticType(classInfo);
+	}
+
+	private ConstructorSymbol resolveConstructor(ClassInfo classInfo, List<Expression> arguments) {
+		List<SemanticType> argumentTypes = new ArrayList<>();
+
+		for (Expression argument : arguments) {
+			argumentTypes.add(argument.resolvedType());
+		}
+
+		for (ConstructorSymbol constructor : classInfo.constructors) {
+			if (constructor.parameters().size() != argumentTypes.size()) {
+				continue;
+			}
+
+			boolean matches = true;
+			for (int i = 0; i < argumentTypes.size(); i++) {
+				SemanticType expected = constructor.parameters().get(i).type();
+				SemanticType actual = argumentTypes.get(i);
+
+				if (!expected.isAssignableFrom(actual)) {
+					matches = false;
+					break;
+				}
+			}
+
+			if (matches) {
+				return constructor;
+			}
+		}
+
+		return null;
+	}
+
+	private ClassInfo resolveClassByName(String name) {
+		ClassInfo local = resolveClassByNameInCurrentClassContext(name);
+		if (local != null) {
+			return local;
+		}
+
+		return currentVisibleClasses.get(name);
+	}
+
+	private ClassInfo resolveClassByNameInCurrentClassContext(String name) {
+		ClassInfo cursor = currentClass;
+
+		while (cursor != null) {
+			ClassInfo nested = cursor.nestedClasses.get(name);
+			if (nested != null) {
+				return nested;
+			}
+
+			if (cursor.declaration.name().equals(name)) {
+				return cursor;
+			}
+
+			cursor = cursor.parent;
+		}
+
+		return null;
 	}
 
 	private SemanticType checkUnary(UnaryExpression unary) {
@@ -977,6 +1375,13 @@ public final class SemanticAnalyzer {
 			return method.returnType();
 		}
 
+		ClassInfo nestedClass = classInfo.nestedClasses.get(memberAccess.memberName());
+		if (nestedClass != null) {
+			SemanticType type = createClassSemanticType(nestedClass);
+			memberAccess.setResolvedType(type);
+			return type;
+		}
+
 		error(
 				memberAccess,
 				"Unknown member '" + memberAccess.memberName()
@@ -988,9 +1393,9 @@ public final class SemanticAnalyzer {
 
 	private ClassInfo resolveSelectTargetClass(SelectExpression memberAccess) {
 		if (memberAccess.target() instanceof IdentifierExpression identifier) {
-			ClassInfo directClass = currentVisibleClasses.get(identifier.name());
+			ClassInfo directClass = resolveClassByName(identifier.name());
 			if (directClass != null) {
-				SemanticType targetType = SemanticType.fromName(identifier.name());
+				SemanticType targetType = createClassSemanticType(directClass);
 				memberAccess.setResolvedTargetType(targetType);
 				memberAccess.setResolvedTargetClass(directClass.declaration);
 				return directClass;
@@ -1000,7 +1405,7 @@ public final class SemanticAnalyzer {
 		SemanticType targetType = checkExpression(memberAccess.target());
 		memberAccess.setResolvedTargetType(targetType);
 
-		ClassInfo classInfo = currentVisibleClasses.get(targetType.name());
+		ClassInfo classInfo = resolveClassByName(targetType.name());
 		if (classInfo != null) {
 			memberAccess.setResolvedTargetClass(classInfo.declaration);
 		}
@@ -1024,7 +1429,7 @@ public final class SemanticAnalyzer {
 			return;
 		}
 
-		ClassInfo classInfo = currentVisibleClasses.get(type.name());
+		ClassInfo classInfo = resolveClassByName(type.name());
 		if (classInfo == null) {
 			error(
 					node,
@@ -1074,9 +1479,9 @@ public final class SemanticAnalyzer {
 					.append("'");
 		}
 
-		if (currentMethod != null) {
-			builder.append(", method '")
-					.append(currentMethod.name())
+		if (currentCallableName != null) {
+			builder.append(", callable '")
+					.append(currentCallableName)
 					.append("'");
 		}
 
@@ -1109,6 +1514,10 @@ public final class SemanticAnalyzer {
 			return methodDeclaration.name();
 		}
 
+		if (node instanceof ConstructorDeclaration constructorDeclaration) {
+			return "constructor(" + constructorDeclaration.parameters().size() + " params)";
+		}
+
 		if (node instanceof ParameterDeclaration parameterDeclaration) {
 			return parameterDeclaration.name();
 		}
@@ -1129,6 +1538,10 @@ public final class SemanticAnalyzer {
 			return identifierExpression.name();
 		}
 
+		if (node instanceof NewExpression newExpression) {
+			return "new " + newExpression.typeName() + "(...)";
+		}
+
 		if (node instanceof SelectExpression selectExpression) {
 			return describeExpression(selectExpression);
 		}
@@ -1143,6 +1556,10 @@ public final class SemanticAnalyzer {
 	private String describeExpression(Expression expression) {
 		if (expression instanceof IdentifierExpression identifier) {
 			return identifier.name();
+		}
+
+		if (expression instanceof NewExpression newExpression) {
+			return "new " + newExpression.typeName() + "(...)";
 		}
 
 		if (expression instanceof SelectExpression memberAccess) {
@@ -1239,17 +1656,25 @@ public final class SemanticAnalyzer {
 
 	private static final class ClassInfo {
 		private final ProgramInfo owner;
+		private final ClassInfo parent;
 		private final ClassDeclaration declaration;
 		private final Map<String, Symbol> fields = new LinkedHashMap<>();
 		private final Map<String, MethodSymbol> methods = new LinkedHashMap<>();
+		private final List<ConstructorSymbol> constructors = new ArrayList<>();
+		private final Map<String, ClassInfo> nestedClasses = new LinkedHashMap<>();
 
-		private ClassInfo(ProgramInfo owner, ClassDeclaration declaration) {
+		private ClassInfo(ProgramInfo owner, ClassInfo parent, ClassDeclaration declaration) {
 			this.owner = owner;
+			this.parent = parent;
 			this.declaration = declaration;
 		}
 
 		private String qualifiedName() {
-			return owner.packageName + "." + declaration.name();
+			if (parent == null) {
+				return owner.packageName + "." + declaration.name();
+			}
+
+			return parent.qualifiedName() + "." + declaration.name();
 		}
 	}
 }

@@ -1,16 +1,14 @@
 package net.villagerzock.compiler.gen;
 
 import net.villagerzock.compiler.ast.AstBuilder;
-import net.villagerzock.compiler.ast.decl.ClassDeclaration;
-import net.villagerzock.compiler.ast.decl.Declaration;
-import net.villagerzock.compiler.ast.decl.MethodDeclaration;
-import net.villagerzock.compiler.ast.decl.ProgramNode;
+import net.villagerzock.compiler.ast.decl.*;
 import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.*;
 import net.villagerzock.compiler.parser.MCSLexer;
 import net.villagerzock.compiler.parser.MCSParser;
 import net.villagerzock.compiler.semantic.MethodSymbol;
 import net.villagerzock.mcfunction.ICommandPart;
+import net.villagerzock.mcfunction.LightMCFunction;
 import net.villagerzock.mcfunction.MCFunction;
 import net.villagerzock.mcfunction.MCFunctionUnit;
 import net.villagerzock.mcfunction.commandParts.*;
@@ -86,6 +84,10 @@ public class Generator {
                 methodDeclaration.body().setAssociatedFunction(function);
             }
         }
+        if (decl instanceof ConstructorDeclaration constructorDeclaration){
+            MCFunction function = unit.create(namespace, pathStack.getPath(),  "init");
+            constructorDeclaration.body().setAssociatedFunction(function);
+        }
     }
 
     private void updateMembers(ClassDeclaration classDeclaration, MCFunctionUnit unit, PathStack pathStack, String namespace) {
@@ -115,6 +117,15 @@ public class Generator {
                             methodDeclaration.name()
                     );
                 }
+            }
+            if (decl instanceof ConstructorDeclaration constructorDeclaration){
+                generateBlock(
+                        constructorDeclaration.body(),
+                        unit,
+                        constructorDeclaration.getFunction(),
+                        pathStack,
+                        "init"
+                );
             }
         }
     }
@@ -190,6 +201,7 @@ public class Generator {
         MCFunction functionWrite = function;
 
         if (useNewFunction) {
+            function.setUsesMacros(true);
             functionWrite = unit.create(namespace, pathStack.getPath(), baseName + "_native");
             function.addCommand(new FunctionCall(functionWrite));
         }
@@ -619,6 +631,60 @@ public class Generator {
 
                 default -> throw new IllegalStateException("Unsupported binary operator: " + binary.operator());
             };
+        }
+
+        if (expression instanceof NewExpression newExpression) {
+            ConstructorDeclaration constructorDeclaration = newExpression.getResolvedConstructor().declaration();
+
+            String allocScore = baseName + "_alloc";
+
+            SnbtCompound locals = compound()
+                    .put("macro", compound());
+
+            List<ICommandPart> commands = new ArrayList<>();
+
+            // 1. allocate() ausführen und neuen Heap-Index holen
+            commands.add(new ExecuteStoreResultScore(
+                    allocScore,
+                    new FunctionCall(new LightMCFunction("std:std/std/allocate_native"))
+            ));
+
+            // 2. Ergebnis von new-expression speichern
+            commands.add(target.storeFrom(new ScoreboardValueTarget(allocScore)));
+
+            // 3. this in Constructor-Frame schreiben
+            commands.add(new TmpWrite(compound()
+                    .put("locals", compound())
+                    .put("macro", compound())
+                    .toSnbt()
+            ));
+
+            commands.add(new ScoreToData(
+                    allocScore,
+                    "storage mcs:memory tmp.locals.this"
+            ));
+
+            // 4. Constructor-Argumente schreiben
+            for (int i = 0; i < newExpression.arguments().size(); i++) {
+                Expression arg = newExpression.arguments().get(i);
+                String paramName = constructorDeclaration.parameters().get(i).name();
+
+                commands.add(generateExpression(
+                        arg,
+                        unit,
+                        function,
+                        pathStack,
+                        new DataValueTarget("storage mcs:memory tmp.locals." + paramName),
+                        baseName + "_ctor_param_" + paramName
+                ));
+            }
+
+            // 5. Constructor ausführen
+            commands.add(new CreateStackFrame());
+            commands.add(new FunctionCall(constructorDeclaration.getFunction()));
+            commands.add(new PopStackFrame());
+
+            return new MultiPart(commands);
         }
 
         throw new IllegalStateException("Unsupported expression: " + expression.getClass().getSimpleName());

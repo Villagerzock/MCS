@@ -15,9 +15,10 @@ packageDecl
 importDecl
 	: IMPORT qualifiedPath SEMICOLON
 	;
+
 staticImportDecl
-    : IMPORT STATIC qualifiedPath SEMICOLON
-    ;
+	: IMPORT STATIC qualifiedPath SEMICOLON
+	;
 
 qualifiedPath
 	: IDENTIFIER COLON pathTail
@@ -38,6 +39,12 @@ classBody
 memberDecl
 	: fieldDecl
 	| methodDecl
+	| constructorDecl
+	| classDecl
+	;
+
+constructorDecl
+	: CONSTRUCTOR LPAREN parameterList? RPAREN block
 	;
 
 fieldDecl
@@ -197,10 +204,15 @@ primaryExpression
 	| STRING
 	| TRUE
 	| FALSE
+	| newExpression
 	| IDENTIFIER
 	| LPAREN expression RPAREN
 	;
 
+newExpression
+	: NEW IDENTIFIER LPAREN argumentList? RPAREN
+	;
+
 inlineExpression
-    : expression EOF
-    ;
+	: expression EOF
+	;

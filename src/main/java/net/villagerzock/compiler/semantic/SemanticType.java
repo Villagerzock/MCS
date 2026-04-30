@@ -11,6 +11,7 @@ public final class SemanticType {
 	public static final SemanticType STRING = new SemanticType("string",new StringLiteralExpression(""));
 	public static final SemanticType BOOLEAN = new SemanticType("boolean", new BooleanLiteralExpression(false));
 	public static final SemanticType VOID = new SemanticType("function", new NullLiteralExpression());
+	public static final SemanticType REFERENCE = new SemanticType("pointer", new NumberLiteralExpression("0"));
 	public static final SemanticType UNKNOWN = new SemanticType("<unknown>", new NullLiteralExpression());
 
 	private final String name;
@@ -52,6 +53,7 @@ public final class SemanticType {
 			case "string" -> STRING;
 			case "bool", "boolean" -> BOOLEAN;
 			case "function", "void" -> VOID;
+			case "pointer" -> REFERENCE;
 			default -> new SemanticType(rawName.trim(),null,null,new NullLiteralExpression());
 		};
 	}

@@ -19,6 +19,6 @@ public class FunctionCall implements ICommandPart {
 
     @Override
     public String apply() {
-        return "function %2$s %3$s".formatted("mcs",function.getFullPath(),ignoreMacros ? "" : "with storage mcs:memory %s".formatted(useTempMacros ? "tmp_macro" : "stack[0].macro"));
+        return "function %1$s %2$s".formatted(function.getFullPath(),ignoreMacros || !function.usesMacros() ? "" : "with storage mcs:memory %s".formatted(useTempMacros ? "tmp_macro" : "stack[0].macro"));
     }
 }
