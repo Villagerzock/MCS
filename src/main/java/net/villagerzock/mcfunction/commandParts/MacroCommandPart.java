@@ -12,6 +12,6 @@ public class MacroCommandPart implements ICommandPart {
     @Override
     public String apply() {
         String result = part.apply();
-        return "%s%s".formatted(result.startsWith("$") ? "" : "$",result);
+        return "%s%s".formatted("$",result);
     }
 }

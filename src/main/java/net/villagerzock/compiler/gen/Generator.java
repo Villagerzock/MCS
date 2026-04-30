@@ -304,29 +304,40 @@ public class Generator {
         }
 
         if (statement instanceof IfStatement ifStatement) {
-            Statement then = ifStatement.thenBranch();
+            String condName = baseName + "_if_cond";
 
-            if (then instanceof BlockStatement blockStatement) {
-                MCFunction f = unit.create(function.getNamespace(), function.getPath(), baseName + "_if");
-                blockStatement.setAssociatedFunction(f);
-                generateBlock(blockStatement, unit, f, pathStack, baseName);
+            function.addCommand(generateExpression(
+                    ifStatement.condition(),
+                    unit,
+                    function,
+                    pathStack,
+                    new ScoreboardValueTarget(condName),
+                    condName
+            ));
 
-                String condName = baseName + "_if_cond";
-
-                function.addCommand(generateExpression(
-                        ifStatement.condition(),
-                        unit,
-                        function,
-                        pathStack,
-                        new ScoreboardValueTarget(condName),
-                        condName
-                ));
+            if (ifStatement.thenBranch() instanceof BlockStatement thenBlock) {
+                MCFunction thenFunction = unit.create(function.getNamespace(), function.getPath(), baseName + "_if");
+                thenBlock.setAssociatedFunction(thenFunction);
+                generateBlock(thenBlock, unit, thenFunction, pathStack, baseName);
 
                 function.addCommand(
-                        new ExecuteCall(new FunctionCall(f, 1))
+                        new ExecuteCall(new FunctionCall(thenFunction, 1))
                                 .addCondition(new ScoreMatchesCondition(condName, "1"))
                 );
             }
+
+            if (ifStatement.elseBranch() instanceof BlockStatement elseBlock) {
+                MCFunction elseFunction = unit.create(function.getNamespace(), function.getPath(), baseName + "_else");
+                elseBlock.setAssociatedFunction(elseFunction);
+                generateBlock(elseBlock, unit, elseFunction, pathStack, baseName);
+
+                function.addCommand(
+                        new ExecuteCall(new FunctionCall(elseFunction, 1))
+                                .addCondition(new ScoreMatchesCondition(condName, "0"))
+                );
+            }
+
+            return;
         }
 
         if (statement instanceof WhileStatement whileStatement) {

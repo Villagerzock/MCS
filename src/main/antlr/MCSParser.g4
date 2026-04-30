@@ -205,9 +205,28 @@ primaryExpression
 	| TRUE
 	| FALSE
 	| newExpression
+	| arrayLiteralExpression
+	| compoundLiteralExpression
 	| IDENTIFIER
 	| LPAREN expression RPAREN
 	;
+
+arrayLiteralExpression
+    : LBRACKET (expression (COMMA expression)*)? RBRACKET
+    ;
+
+compoundLiteralExpression
+    : LBRACE (compoundEntry (COMMA compoundEntry)*)? RBRACE
+    ;
+
+compoundEntry
+    : compoundKey COLON expression
+    ;
+
+compoundKey
+    : IDENTIFIER
+    | STRING
+    ;
 
 newExpression
 	: NEW IDENTIFIER LPAREN argumentList? RPAREN
