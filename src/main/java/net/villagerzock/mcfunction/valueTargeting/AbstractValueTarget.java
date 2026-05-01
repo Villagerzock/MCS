@@ -2,6 +2,7 @@ package net.villagerzock.mcfunction.valueTargeting;
 
 import net.villagerzock.mcfunction.ICommandPart;
 import net.villagerzock.mcfunction.commandParts.EmptyCommandPart;
+import net.villagerzock.mcfunction.commandParts.MacroCommandPart;
 
 public abstract class AbstractValueTarget {
     public final ICommandPart storeFrom(AbstractValueTarget target){

@@ -12,7 +12,6 @@ public class DataValueTarget extends AbstractValueTarget {
 
     private final String path;
     // z.B. "storage mcs:memory stack[0].locals.x"
-
     public DataValueTarget(String path) {
         this.path = path;
     }
@@ -48,6 +47,7 @@ public class DataValueTarget extends AbstractValueTarget {
 
         return null;
     }
+
 
     @Override
     public boolean equals(Object obj) {

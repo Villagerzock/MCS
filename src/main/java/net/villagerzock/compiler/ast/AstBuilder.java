@@ -71,9 +71,16 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
     @Override
     public Node visitClassDecl(MCSParser.ClassDeclContext ctx) {
+        boolean isRecord = ctx.CLASS() == null;
         String name = ctx.IDENTIFIER().getText();
 
         List<Declaration> members = new ArrayList<>();
+        if (isRecord){
+            for (ParameterDeclaration parameterDeclaration : visitParameters(ctx.parameterList())){
+                FieldDeclaration fieldDeclaration = new FieldDeclaration(parameterDeclaration.type(),parameterDeclaration.name(),null);
+                members.add(fieldDeclaration);
+            }
+        }
         for (MCSParser.MemberDeclContext member : ctx.classBody().memberDecl()) {
             members.add((Declaration) visit(member));
         }
@@ -130,7 +137,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         BlockStatement body = (BlockStatement) visit(ctx.block());
 
         return new MethodDeclaration(
-                visitMethodModifiers(ctx.methodModifier()),
+                visitMethodModifiers(ctx.methodModifier(), false),
                 returnType,
                 name,
                 parameters,
@@ -144,6 +151,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         String name = ctx.IDENTIFIER().getText();
         List<ParameterDeclaration> parameters = visitParameters(ctx.parameterList());
         String nativeBody = getNativeBody(ctx.nativeBlock());
+        Set<MethodModifier> modifiers = visitMethodModifiers(ctx.methodModifier(), true);
 
         System.out.println("DEBUG NATIVE BODY = ["
                 + nativeBody
@@ -153,7 +161,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
                 + "]");
 
         return new MethodDeclaration(
-                Set.of(MethodModifier.NATIVE),
+                modifiers,
                 returnType,
                 name,
                 parameters,
@@ -189,15 +197,18 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
 
 
-    private Set<MethodModifier> visitMethodModifiers(List<MCSParser.MethodModifierContext> contexts) {
+    private Set<MethodModifier> visitMethodModifiers(List<MCSParser.MethodModifierContext> contexts, boolean isNative) {
         EnumSet<MethodModifier> modifiers = EnumSet.noneOf(MethodModifier.class);
 
         for (MCSParser.MethodModifierContext context : contexts) {
             if (context.STATIC() != null) {
                 modifiers.add(MethodModifier.STATIC);
+
             }
         }
-
+        if (isNative){
+            modifiers.add(MethodModifier.NATIVE);
+        }
         return modifiers;
     }
 

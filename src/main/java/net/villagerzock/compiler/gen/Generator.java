@@ -20,6 +20,8 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,17 +60,17 @@ public class Generator {
 
     private void generateClasses(ProgramNode node, MCFunctionUnit unit, PathStack pathStack) {
         for (ClassDeclaration decl : node.classes()) {
-            generateMember(decl, unit, node.packagePath().namespace(), pathStack);
+            generateMember(decl, unit, node.packagePath().namespace(), pathStack,decl);
         }
     }
 
     private void generateMembers(ClassDeclaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack) {
         for (Declaration d : decl.members()) {
-            generateMember(d, unit, namespace, pathStack);
+            generateMember(d, unit, namespace, pathStack,decl);
         }
     }
 
-    private void generateMember(Declaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack) {
+    private void generateMember(Declaration decl, MCFunctionUnit unit, String namespace, PathStack pathStack, ClassDeclaration containingClass) {
         if (decl instanceof ClassDeclaration classDeclaration) {
             pathStack.push(classDeclaration.name());
             generateMembers(classDeclaration, unit, namespace, pathStack);
@@ -81,21 +83,49 @@ public class Generator {
                 methodDeclaration.nativeBody().setAssociatedFunction(function);
             } else {
                 MCFunction function = unit.create(namespace, pathStack.getPath(), methodDeclaration.name() + "_entry");
+
+                if (!isStaticDeclaration(methodDeclaration)) {
+                    function.setUsesMacros(true);
+                }
+
                 methodDeclaration.body().setAssociatedFunction(function);
             }
         }
+
         if (decl instanceof FieldDeclaration fieldDeclaration){
             String name = fieldDeclaration.name();
             MCFunction getter = unit.create(namespace,pathStack.getPath(),name+"_getter");
             MCFunction setter = unit.create(namespace,pathStack.getPath(),name+"_setter");
+            if (fieldDeclaration.initializer() != null){
+                MCFunction init = containingClass.getInit(()->unit.create(namespace,pathStack.getPath(),"init"));
+                init.addCommand(new MacroCommandPart(generateExpression(
+                        fieldDeclaration.initializer(),
+                        unit,
+                        init,
+                        pathStack,
+                        new DataValueTarget("storage mcs:memory heap[$(this)].%s".formatted(name)),
+                        name
+                )));
+            }
+
             getter.setUsesMacros(true);
             setter.setUsesMacros(true);
+
             getter.addCommand(new GetFieldPart(name));
             setter.addCommand(new SetFieldPart(name));
+
+            fieldDeclaration.setGetter(getter);
+            fieldDeclaration.setSetter(setter);
         }
+
         if (decl instanceof ConstructorDeclaration constructorDeclaration){
             MCFunction function = unit.create(namespace, pathStack.getPath(),  "ctor");
+            function.setUsesMacros(true);
             constructorDeclaration.body().setAssociatedFunction(function);
+            MCFunction init = containingClass.getInit(() -> null);
+            if (init != null){
+                constructorDeclaration.getFunction().addCommand(new FunctionCall(init, 2));
+            }
         }
     }
 
@@ -127,7 +157,9 @@ public class Generator {
                     );
                 }
             }
+
             if (decl instanceof ConstructorDeclaration constructorDeclaration){
+
                 generateBlock(
                         constructorDeclaration.body(),
                         unit,
@@ -135,6 +167,8 @@ public class Generator {
                         pathStack,
                         "ctor"
                 );
+
+
             }
         }
     }
@@ -234,11 +268,13 @@ public class Generator {
         if (statement instanceof VariableDeclarationStatement varDecl){
             String varName = varDecl.name();
             Expression init;
+
             if (varDecl.initializer() != null){
                 init = varDecl.initializer();
             }else {
                 init = varDecl.type().resolvedType().getDefaultExpression();
             }
+
             function.addCommand(generateExpression(
                     init,
                     unit,
@@ -248,6 +284,7 @@ public class Generator {
                     baseName+"_var_"+varName
             ));
         }
+
         if (statement instanceof ExpressionStatement expressionStatement) {
             Expression exp = expressionStatement.expression();
 
@@ -263,11 +300,26 @@ public class Generator {
             }
 
             if (exp instanceof AssignmentExpression assignmentExpression) {
-                Expression target = assignmentExpression.target();
+                Expression targetExpression = assignmentExpression.target();
                 Expression value = assignmentExpression.value();
 
-                if (!(target instanceof IdentifierExpression identifier)) {
-                    throw new IllegalStateException("Unsupported assignment target: " + target.getClass().getSimpleName());
+                FieldDeclaration fieldDeclaration = resolvedFieldOf(targetExpression);
+
+                if (fieldDeclaration != null) {
+                    function.addCommand(generateFieldSetterExpression(
+                            targetExpression,
+                            fieldDeclaration,
+                            value,
+                            unit,
+                            function,
+                            pathStack,
+                            baseName + "_field_assign_" + fieldDeclaration.name()
+                    ));
+                    return;
+                }
+
+                if (!(targetExpression instanceof IdentifierExpression identifier)) {
+                    throw new IllegalStateException("Unsupported assignment target: " + targetExpression.getClass().getSimpleName());
                 }
 
                 String varName = identifier.name();
@@ -285,10 +337,59 @@ public class Generator {
             }
 
             if (exp instanceof UpdateExpression updateExpression) {
-                Expression target = updateExpression.target();
+                Expression targetExpression = updateExpression.target();
 
-                if (!(target instanceof IdentifierExpression identifier)) {
-                    throw new IllegalStateException("Unsupported update target: " + target.getClass().getSimpleName());
+                FieldDeclaration fieldDeclaration = resolvedFieldOf(targetExpression);
+
+                if (fieldDeclaration != null) {
+                    String tmpName = baseName + "_field_update_" + fieldDeclaration.name();
+
+                    List<ICommandPart> commands = new ArrayList<>();
+
+                    commands.add(generateFieldGetterExpression(
+                            targetExpression,
+                            fieldDeclaration,
+                            unit,
+                            function,
+                            pathStack,
+                            new ScoreboardValueTarget(tmpName),
+                            tmpName + "_get"
+                    ));
+
+                    if (updateExpression.operator() == UpdateOperator.INCREMENT) {
+                        commands.add(new ScoreAddValue(tmpName, 1));
+                    } else if (updateExpression.operator() == UpdateOperator.DECREMENT) {
+                        commands.add(new ScoreRemoveValue(tmpName, 1));
+                    } else {
+                        throw new IllegalStateException("Unsupported update operator: " + updateExpression.operator());
+                    }
+
+                    commands.add(writeFieldPointerMacro(
+                            targetExpression,
+                            unit,
+                            function,
+                            pathStack,
+                            tmpName + "_ptr"
+                    ));
+
+                    commands.add(new DataSetValue(
+                            "storage mcs:memory tmp",
+                            "0"
+                    ));
+
+                    commands.add(new ScoreToData(
+                            tmpName,
+                            "storage mcs:memory tmp"
+                    ));
+
+                    commands.add(new FunctionCall(fieldDeclaration.getSetter(), 2));
+
+                    function.addCommand(new MultiPart(commands));
+                    return;
+                }
+
+                if (!(targetExpression instanceof IdentifierExpression identifier)) {
+                    throw new IllegalStateException("Unsupported update target: " + targetExpression.getClass().getSimpleName());
                 }
 
                 String varName = identifier.name();
@@ -462,15 +563,18 @@ public class Generator {
     ) {
         MethodSymbol method = callExpression.resolvedMethod();
         SnbtCompound locals = compound();
+        SnbtCompound macro = compound();
 
         List<DelayedParam> delayedParams = new ArrayList<>();
 
         for (int i = 0; i < callExpression.arguments().size(); i++) {
             Expression param = callExpression.arguments().get(i);
             String name = method.declaration().parameters().get(i).name();
+
             if (param instanceof NullLiteralExpression){
                 continue;
             }
+
             if (param instanceof StringLiteralExpression stringLiteralExpression) {
                 locals.putString(name, stringLiteralExpression.rawValue());
             } else if (param instanceof NumberLiteralExpression number) {
@@ -492,11 +596,21 @@ public class Generator {
 
         SnbtCompound frame = compound()
                 .put("locals", locals)
-                .put("macro", compound());
+                .put("macro", macro);
 
         List<ICommandPart> commands = new ArrayList<>();
 
         commands.add(new TmpWrite(frame.toSnbt()));
+
+        writeThisMacroForMethodCall(
+                callExpression,
+                method.declaration(),
+                unit,
+                function,
+                pathStack,
+                commands,
+                baseName + "_this"
+        );
 
         for (DelayedParam delayed : delayedParams) {
             commands.add(generateExpression(
@@ -504,7 +618,7 @@ public class Generator {
                     unit,
                     function,
                     pathStack,
-                    new DataValueTarget("tmp.locals." + delayed.name()),
+                    new DataValueTarget("storage mcs:memory tmp.locals." + delayed.name()),
                     baseName + "_param_" + delayed.name()
             ));
         }
@@ -530,6 +644,20 @@ public class Generator {
             AbstractValueTarget target,
             String baseName
     ) {
+        FieldDeclaration fieldDeclaration = resolvedFieldOf(expression);
+
+        if (fieldDeclaration != null) {
+            return generateFieldGetterExpression(
+                    expression,
+                    fieldDeclaration,
+                    unit,
+                    function,
+                    pathStack,
+                    target,
+                    baseName
+            );
+        }
+
         if (expression instanceof NumberLiteralExpression number) {
             ScoreboardValueTarget tmp = new ScoreboardValueTarget(baseName);
 
@@ -547,6 +675,7 @@ public class Generator {
                     target.storeFrom(tmp)
             ));
         }
+
         if (expression instanceof TStringLiteralExpression string) {
             SnbtCompound compound = compound();
 
@@ -586,10 +715,8 @@ public class Generator {
 
             compound.put("text", string(resultString.toString()));
 
-            // tmp = { text: "... $(m_0) ...", ... }
             function.addCommand(new TmpMacroWrite(compound.toSnbt()));
 
-            // tmp.m_X = result of ${...}
             for (InlineMacro macro : macros) {
                 function.addCommand(generateExpression(
                         macro.expression(),
@@ -615,11 +742,17 @@ public class Generator {
 
             return new FunctionCall(macroFunction, 2);
         }
+
         if (expression instanceof StringLiteralExpression string) {
             return target.storeFrom(new StringValueTarget(string.rawValue()));
         }
 
         if (expression instanceof IdentifierExpression identifier) {
+            if (identifier.name().equals("this")) {
+                function.setUsesMacros(true);
+                return target.storeFrom(new DataValueTarget(macroPath("this")));
+            }
+
             return target.storeFrom(new DataValueTarget(localPath(identifier.name())));
         }
 
@@ -658,21 +791,15 @@ public class Generator {
 
             String allocScore = baseName + "_alloc";
 
-            SnbtCompound locals = compound()
-                    .put("macro", compound());
-
             List<ICommandPart> commands = new ArrayList<>();
 
-            // 1. allocate() ausführen und neuen Heap-Index holen
             commands.add(new ExecuteStoreResultScore(
                     allocScore,
                     new FunctionCall(new LightMCFunction("std:std/std/allocate_native"))
             ));
 
-            // 2. Ergebnis von new-expression speichern
             commands.add(target.storeFrom(new ScoreboardValueTarget(allocScore)));
 
-            // 3. this in Constructor-Frame schreiben
             commands.add(new TmpWrite(compound()
                     .put("locals", compound())
                     .put("macro", compound())
@@ -681,10 +808,9 @@ public class Generator {
 
             commands.add(new ScoreToData(
                     allocScore,
-                    "storage mcs:memory tmp.locals.this"
+                    "storage mcs:memory tmp.macro.this"
             ));
 
-            // 4. Constructor-Argumente schreiben
             for (int i = 0; i < newExpression.arguments().size(); i++) {
                 Expression arg = newExpression.arguments().get(i);
                 String paramName = constructorDeclaration.parameters().get(i).name();
@@ -699,7 +825,6 @@ public class Generator {
                 ));
             }
 
-            // 5. Constructor ausführen
             commands.add(new CreateStackFrame());
             commands.add(new FunctionCall(constructorDeclaration.getFunction()));
             commands.add(new PopStackFrame());
@@ -708,6 +833,420 @@ public class Generator {
         }
 
         throw new IllegalStateException("Unsupported expression: " + expression.getClass().getSimpleName());
+    }
+
+    private ICommandPart generateFieldGetterExpression(
+            Expression fieldExpression,
+            FieldDeclaration fieldDeclaration,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        String resultName = baseName + "_field_result";
+
+        return new MultiPart(List.of(
+                writeFieldPointerMacro(
+                        fieldExpression,
+                        unit,
+                        function,
+                        pathStack,
+                        baseName + "_field_ptr"
+                ),
+                new ExecuteStoreResultScore(
+                        resultName,
+                        new FunctionCall(fieldDeclaration.getGetter(), 2)
+                ),
+                target.storeFrom(new ScoreboardValueTarget(resultName))
+        ));
+    }
+
+    private ICommandPart generateFieldSetterExpression(
+            Expression fieldExpression,
+            FieldDeclaration fieldDeclaration,
+            Expression valueExpression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        return new MultiPart(List.of(
+                writeFieldPointerMacro(
+                        fieldExpression,
+                        unit,
+                        function,
+                        pathStack,
+                        baseName + "_field_ptr"
+                ),
+                generateExpression(
+                        valueExpression,
+                        unit,
+                        function,
+                        pathStack,
+                        new DataValueTarget("storage mcs:memory tmp_macro.value"),
+                        baseName + "_field_value"
+                ),
+                new FunctionCall(fieldDeclaration.getSetter(), 2)
+        ));
+    }
+
+    private ICommandPart writeFieldPointerMacro(
+            Expression fieldExpression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
+        Expression ownerExpression = ownerExpressionOf(fieldExpression);
+
+        if (ownerExpression == null) {
+            return new DataToData(
+                    localPath("this"),
+                    "storage mcs:memory tmp_macro.field"
+            );
+        }
+
+        return generateExpression(
+                ownerExpression,
+                unit,
+                function,
+                pathStack,
+                new DataValueTarget("storage mcs:memory tmp_macro.field"),
+                baseName
+        );
+    }
+
+    private FieldDeclaration resolvedFieldOf(Expression expression) {
+        Object value = invokeFirstExistingNoArg(
+                expression,
+                "getResolvedField",
+                "resolvedField",
+                "getFieldDeclaration",
+                "fieldDeclaration",
+                "getField",
+                "field",
+                "getResolvedDeclaration",
+                "resolvedDeclaration",
+                "getDeclaration",
+                "declaration"
+        );
+
+        FieldDeclaration direct = asFieldDeclaration(value);
+        if (direct != null) {
+            return direct;
+        }
+
+        Object fieldValue = readFirstExistingField(
+                expression,
+                "resolvedField",
+                "fieldDeclaration",
+                "field",
+                "resolvedDeclaration",
+                "declaration"
+        );
+
+        FieldDeclaration fromField = asFieldDeclaration(fieldValue);
+        if (fromField != null) {
+            return fromField;
+        }
+
+        for (Field field : allFields(expression.getClass())) {
+            try {
+                field.setAccessible(true);
+                FieldDeclaration possible = asFieldDeclaration(field.get(expression));
+
+                if (possible != null) {
+                    return possible;
+                }
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private FieldDeclaration asFieldDeclaration(Object value) {
+        if (value instanceof FieldDeclaration fieldDeclaration) {
+            return fieldDeclaration;
+        }
+
+        if (value == null) {
+            return null;
+        }
+
+        Object nestedDeclaration = invokeFirstExistingNoArg(
+                value,
+                "declaration",
+                "getDeclaration",
+                "fieldDeclaration",
+                "getFieldDeclaration"
+        );
+
+        if (nestedDeclaration instanceof FieldDeclaration fieldDeclaration) {
+            return fieldDeclaration;
+        }
+
+        return null;
+    }
+
+    private Expression ownerExpressionOf(Expression expression) {
+        Object value = invokeFirstExistingNoArg(
+                expression,
+                "getOwner",
+                "owner",
+                "getReceiver",
+                "receiver",
+                "getTarget",
+                "target",
+                "getObject",
+                "object",
+                "getLeft",
+                "left"
+        );
+
+        if (value instanceof Expression ownerExpression) {
+            return ownerExpression;
+        }
+
+        Object fieldValue = readFirstExistingField(
+                expression,
+                "owner",
+                "receiver",
+                "target",
+                "object",
+                "left"
+        );
+
+        if (fieldValue instanceof Expression ownerExpression) {
+            return ownerExpression;
+        }
+
+        for (Field field : allFields(expression.getClass())) {
+            try {
+                field.setAccessible(true);
+                Object possible = field.get(expression);
+
+                if (possible instanceof Expression ownerExpression && possible != expression) {
+                    return ownerExpression;
+                }
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private Object invokeFirstExistingNoArg(Object target, String... methodNames) {
+        for (String methodName : methodNames) {
+            Method method = findNoArgMethod(target.getClass(), methodName);
+
+            if (method == null) {
+                continue;
+            }
+
+            try {
+                method.setAccessible(true);
+                return method.invoke(target);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private Method findNoArgMethod(Class<?> type, String methodName) {
+        Class<?> current = type;
+
+        while (current != null) {
+            try {
+                Method method = current.getDeclaredMethod(methodName);
+
+                if (method.getParameterCount() == 0) {
+                    return method;
+                }
+            } catch (NoSuchMethodException ignored) {
+            }
+
+            current = current.getSuperclass();
+        }
+
+        return null;
+    }
+
+    private Object readFirstExistingField(Object target, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            Field field = findField(target.getClass(), fieldName);
+
+            if (field == null) {
+                continue;
+            }
+
+            try {
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        }
+
+        return null;
+    }
+
+    private Field findField(Class<?> type, String fieldName) {
+        Class<?> current = type;
+
+        while (current != null) {
+            try {
+                return current.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException ignored) {
+            }
+
+            current = current.getSuperclass();
+        }
+
+        return null;
+    }
+
+    private List<Field> allFields(Class<?> type) {
+        List<Field> fields = new ArrayList<>();
+
+        Class<?> current = type;
+
+        while (current != null) {
+            fields.addAll(Arrays.asList(current.getDeclaredFields()));
+            current = current.getSuperclass();
+        }
+
+        return fields;
+    }
+
+    private void writeThisMacroForMethodCall(
+            CallExpression callExpression,
+            MethodDeclaration methodDeclaration,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            List<ICommandPart> commands,
+            String baseName
+    ) {
+        Expression receiver = receiverExpressionOfCall(callExpression);
+
+        if (receiver == null && isStaticDeclaration(methodDeclaration)) {
+            return;
+        }
+
+        if (receiver == null) {
+            function.setUsesMacros(true);
+
+            commands.add(new DataToData(
+                    macroPath("this"),
+                    "storage mcs:memory tmp.macro.this"
+            ));
+            return;
+        }
+
+        if (isThisExpression(receiver)) {
+            function.setUsesMacros(true);
+
+            commands.add(new DataToData(
+                    macroPath("this"),
+                    "storage mcs:memory tmp.macro.this"
+            ));
+            return;
+        }
+
+        commands.add(generateExpression(
+                receiver,
+                unit,
+                function,
+                pathStack,
+                new DataValueTarget("storage mcs:memory tmp.macro.this"),
+                baseName
+        ));
+    }
+
+    private Expression receiverExpressionOfCall(CallExpression callExpression) {
+        Object callee = invokeFirstExistingNoArg(
+                callExpression,
+                "callee",
+                "getCallee",
+                "target",
+                "getTarget",
+                "method",
+                "getMethod",
+                "expression",
+                "getExpression"
+        );
+
+        if (callee instanceof Expression calleeExpression) {
+            FieldDeclaration fieldDeclaration = resolvedFieldOf(calleeExpression);
+
+            if (fieldDeclaration == null) {
+                Expression owner = ownerExpressionOf(calleeExpression);
+
+                if (owner != null) {
+                    return owner;
+                }
+            }
+        }
+
+        Object directReceiver = invokeFirstExistingNoArg(
+                callExpression,
+                "receiver",
+                "getReceiver",
+                "owner",
+                "getOwner",
+                "object",
+                "getObject"
+        );
+
+        if (directReceiver instanceof Expression receiver) {
+            return receiver;
+        }
+
+        Object fieldReceiver = readFirstExistingField(
+                callExpression,
+                "receiver",
+                "owner",
+                "object"
+        );
+
+        if (fieldReceiver instanceof Expression receiver) {
+            return receiver;
+        }
+
+        return null;
+    }
+
+    private boolean isThisExpression(Expression expression) {
+        return expression instanceof IdentifierExpression identifier && identifier.name().equals("this");
+    }
+
+    private boolean isStaticDeclaration(Object declaration) {
+        Object value = invokeFirstExistingNoArg(
+                declaration,
+                "isStatic",
+                "static",
+                "isStaticMethod",
+                "isStaticDeclaration"
+        );
+
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+
+        Object fieldValue = readFirstExistingField(
+                declaration,
+                "isStatic",
+                "static",
+                "staticMethod"
+        );
+
+        if (fieldValue instanceof Boolean bool) {
+            return bool;
+        }
+
+        return false;
     }
 
     private Expression parseInlineExpression(String source) {
@@ -737,32 +1276,72 @@ public class Generator {
     ) {
         MethodSymbol method = callExpression.resolvedMethod();
         SnbtCompound locals = compound();
+        SnbtCompound macro = compound();
+
+        List<DelayedParam> delayedParams = new ArrayList<>();
 
         for (int i = 0; i < callExpression.arguments().size(); i++) {
             Expression param = callExpression.arguments().get(i);
             String name = method.declaration().parameters().get(i).name();
 
-            if (param instanceof StringLiteralExpression stringLiteralExpression) {
-                locals.putString(name, stringLiteralExpression.rawValue());
+            if (param instanceof NullLiteralExpression){
                 continue;
             }
 
-            throw new IllegalStateException("Only string literal call arguments are supported right now");
+            if (param instanceof StringLiteralExpression stringLiteralExpression) {
+                locals.putString(name, stringLiteralExpression.rawValue());
+            } else if (param instanceof NumberLiteralExpression number) {
+                String raw = number.rawValue();
+
+                if (raw.endsWith("f") || raw.endsWith("F")) {
+                    locals.put(name, floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1))));
+                } else if (raw.contains(".")) {
+                    locals.put(name, doubleNumber(Double.parseDouble(raw)));
+                } else {
+                    locals.put(name, integer(Integer.parseInt(raw)));
+                }
+            } else if (param instanceof BooleanLiteralExpression bool) {
+                locals.put(name, bool(bool.value()));
+            } else {
+                delayedParams.add(new DelayedParam(name, param));
+            }
         }
 
         SnbtCompound frame = compound()
                 .put("locals", locals)
-                .put("macro", compound());
+                .put("macro", macro);
 
-        ScoreboardValueTarget tmp = new ScoreboardValueTarget(baseName);
+        List<ICommandPart> commands = new ArrayList<>();
 
-        return new MultiPart(List.of(
-                new TmpWrite(frame.toSnbt()),
-                new CreateStackFrame(),
-                new ExecuteStoreResultScore(baseName, new FunctionCall(method.declaration().getFunction())),
-                new PopStackFrame(),
-                target.storeFrom(tmp)
-        ));
+        commands.add(new TmpWrite(frame.toSnbt()));
+
+        writeThisMacroForMethodCall(
+                callExpression,
+                method.declaration(),
+                unit,
+                function,
+                pathStack,
+                commands,
+                baseName + "_this"
+        );
+
+        for (DelayedParam delayed : delayedParams) {
+            commands.add(generateExpression(
+                    delayed.expression(),
+                    unit,
+                    function,
+                    pathStack,
+                    new DataValueTarget("storage mcs:memory tmp.locals." + delayed.name()),
+                    baseName + "_param_" + delayed.name()
+            ));
+        }
+
+        commands.add(new CreateStackFrame());
+        commands.add(new ExecuteStoreResultScore(baseName, new FunctionCall(method.declaration().getFunction())));
+        commands.add(new PopStackFrame());
+        commands.add(target.storeFrom(new ScoreboardValueTarget(baseName)));
+
+        return new MultiPart(commands);
     }
 
     private ICommandPart generateUnaryExpression(

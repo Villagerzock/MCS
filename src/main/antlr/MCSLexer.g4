@@ -12,6 +12,7 @@ lexer grammar MCSLexer;
 PACKAGE : 'package';
 IMPORT : 'import';
 CLASS : 'class';
+RECORD : 'record';
 NATIVE : 'native' { inNativeDeclaration = true; nativeParenDepth = 0; expectNativeBlock = false; };
 STATIC : 'static';
 FUNCTION : 'function';

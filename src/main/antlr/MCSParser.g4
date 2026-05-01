@@ -29,7 +29,7 @@ pathTail
 	;
 
 classDecl
-	: CLASS IDENTIFIER classBody
+	: (CLASS IDENTIFIER | RECORD IDENTIFIER LPAREN parameterList? RPAREN) classBody
 	;
 
 classBody
@@ -57,7 +57,7 @@ methodDecl
 	;
 
 nativeMethodDecl
-	: NATIVE methodModifier* returnType IDENTIFIER LPAREN parameterList? RPAREN nativeBlock
+	: methodModifier* NATIVE returnType IDENTIFIER LPAREN parameterList? RPAREN nativeBlock
 	;
 
 normalMethodDecl

@@ -41,6 +41,8 @@ public class ScoreboardValueTarget extends AbstractValueTarget {
         return null;
     }
 
+
+
     @Override
     public boolean equals(Object obj) {
         if (obj instanceof ScoreboardValueTarget dataValueTarget){

@@ -106,6 +106,17 @@ public final class SemanticAnalyzer {
 		return currentProgram != null && currentProgram.node.isLib();
 	}
 
+	private boolean isInStaticContext() {
+		return currentConstructor == null
+				&& currentMethod != null
+				&& currentMethod.declaration().isStatic();
+	}
+
+	private boolean isClassTarget(SelectExpression selectExpression) {
+		return selectExpression.target() instanceof IdentifierExpression identifier
+				&& resolveClassByName(identifier.name()) != null;
+	}
+
 	private void collectPrograms(List<ProgramNode> programs) {
 		for (ProgramNode program : programs) {
 			String packageName = packageName(program);
@@ -493,7 +504,6 @@ public final class SemanticAnalyzer {
 
 		ClassInfo importedClass = resolveClassPath(path.namespace(), segments);
 		if (importedClass == null) {
-			String packageName = toPackageName(path.namespace(), segments.subList(0, Math.max(0, segments.size() - 1)));
 			error(
 					importDeclaration,
 					"Unknown imported class '" + last
@@ -671,27 +681,47 @@ public final class SemanticAnalyzer {
 
 		if ("*".equals(memberName)) {
 			for (MethodSymbol method : importedClass.methods.values()) {
-				addVisibleStaticMethod(visible, staticImportDeclaration, method, importedClass);
+				if (method.declaration().isStatic()){
+					addVisibleStaticMethodIfStatic(visible, staticImportDeclaration, method, importedClass);
+				}
 			}
 			return;
 		}
 
 		MethodSymbol method = importedClass.methods.get(memberName);
-		if (method == null) {
-			ClassInfo nestedClass = importedClass.nestedClasses.get(memberName);
-			if (nestedClass != null) {
-				return;
-			}
+		if (method != null) {
+			addVisibleStaticMethodIfStatic(visible, staticImportDeclaration, method, importedClass);
+			return;
+		}
 
+		ClassInfo nestedClass = importedClass.nestedClasses.get(memberName);
+		if (nestedClass != null) {
+			return;
+		}
+
+		error(
+				staticImportDeclaration,
+				"Unknown static imported member '" + memberName
+						+ "' on class '" + importedClass.qualifiedName() + "'."
+		);
+	}
+
+	private void addVisibleStaticMethodIfStatic(
+			Map<String, MethodSymbol> visible,
+			Node errorNode,
+			MethodSymbol method,
+			ClassInfo importedClass
+	) {
+		if (!method.declaration().isStatic()) {
 			error(
-					staticImportDeclaration,
-					"Unknown static imported member '" + memberName
-							+ "' on class '" + importedClass.qualifiedName() + "'."
+					errorNode,
+					"Cannot static import non-static method '" + method.name()
+							+ "' from class '" + importedClass.qualifiedName() + "'."
 			);
 			return;
 		}
 
-		addVisibleStaticMethod(visible, staticImportDeclaration, method, importedClass);
+		addVisibleStaticMethod(visible, errorNode, method, importedClass);
 	}
 
 	private void addVisibleStaticMethod(
@@ -1071,7 +1101,6 @@ public final class SemanticAnalyzer {
 		return result;
 	}
 
-
 	private SemanticType checkNewExpression(NewExpression expression) {
 		ClassInfo classInfo = resolveClassByName(expression.typeName());
 
@@ -1322,24 +1351,47 @@ public final class SemanticAnalyzer {
 			MethodSymbol local = currentClass.methods.get(identifier.name());
 
 			if (local != null) {
+				if (isInStaticContext() && !local.declaration().isStatic()) {
+					error(identifier, "Cannot call non-static method '" + local.name() + "' from static context.");
+				}
 				return local;
 			}
 
 			return currentVisibleStaticMethods.get(identifier.name());
 		}
 
-		if (callee instanceof SelectExpression memberAccess) {
-			ClassInfo classInfo = resolveSelectTargetClass(memberAccess);
+		if (callee instanceof SelectExpression selectExpression) {
+			ClassInfo classInfo = resolveSelectTargetClass(selectExpression);
 
 			if (classInfo == null) {
 				return null;
 			}
 
-			MethodSymbol method = classInfo.methods.get(memberAccess.memberName());
-			if (method != null) {
-				memberAccess.setResolvedMethod(method);
-				memberAccess.setResolvedType(method.returnType());
+			MethodSymbol method = classInfo.methods.get(selectExpression.memberName());
+			if (method == null) {
+				return null;
 			}
+
+			boolean classTarget = isClassTarget(selectExpression);
+
+			if (classTarget && !method.declaration().isStatic()) {
+				error(
+						selectExpression,
+						"Cannot call non-static method '" + method.name()
+								+ "' on class '" + classInfo.qualifiedName() + "'."
+				);
+			}
+
+			if (!classTarget && method.declaration().isStatic()) {
+				error(
+						selectExpression,
+						"Cannot call static method '" + method.name()
+								+ "' on an instance of '" + classInfo.qualifiedName() + "'."
+				);
+			}
+
+			selectExpression.setResolvedMethod(method);
+			selectExpression.setResolvedType(method.returnType());
 			return method;
 		}
 
@@ -1370,6 +1422,24 @@ public final class SemanticAnalyzer {
 
 		MethodSymbol method = classInfo.methods.get(memberAccess.memberName());
 		if (method != null) {
+			boolean classTarget = isClassTarget(memberAccess);
+
+			if (classTarget && !method.declaration().isStatic()) {
+				error(
+						memberAccess,
+						"Cannot access non-static method '" + method.name()
+								+ "' on class '" + classInfo.qualifiedName() + "'."
+				);
+			}
+
+			if (!classTarget && method.declaration().isStatic()) {
+				error(
+						memberAccess,
+						"Cannot access static method '" + method.name()
+								+ "' on an instance of '" + classInfo.qualifiedName() + "'."
+				);
+			}
+
 			memberAccess.setResolvedMethod(method);
 			memberAccess.setResolvedType(method.returnType());
 			return method.returnType();
