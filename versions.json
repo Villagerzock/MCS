@@ -1,0 +1,23 @@
+{
+  "4": { "version": "1.13", "type": "release" },
+  "5": { "version": "1.15", "type": "release" },
+  "6": { "version": "1.16", "type": "release" },
+  "7": { "version": "1.17", "type": "release" },
+  "8": { "version": "1.18", "type": "release" },
+  "9": { "version": "1.18.2", "type": "release" },
+  "10": { "version": "1.19", "type": "release" },
+  "12": { "version": "1.19.4", "type": "release" },
+  "15": { "version": "1.20", "type": "release" },
+  "18": { "version": "1.20.2", "type": "release" },
+  "22": { "version": "1.20.3", "type": "release" },
+  "26": { "version": "1.20.5", "type": "release" },
+  "34": { "version": "1.21", "type": "release" },
+  "41": { "version": "1.21.2", "type": "release" },
+  "48": { "version": "1.21.3", "type": "release" },
+  "61": { "version": "1.21.4", "type": "release" },
+  "71": { "version": "1.21.5", "type": "release" },
+  "80": { "version": "1.21.6", "type": "release" },
+  "81": { "version": "1.21.7", "type": "release" },
+  "95": { "version": "26.1-snapshot-1", "type": "snapshot" },
+  "100": { "version": "26.1-snapshot-11", "type": "snapshot" }
+}
