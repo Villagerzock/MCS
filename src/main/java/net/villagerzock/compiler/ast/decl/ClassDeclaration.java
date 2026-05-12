@@ -8,7 +8,7 @@ import net.villagerzock.mcfunction.MCFunctionUnit;
 import java.util.List;
 import java.util.function.Supplier;
 
-public final class ClassDeclaration extends AstNode implements Declaration {
+public class ClassDeclaration extends AstNode implements Declaration {
 	private final String name;
 	private final List<Declaration> members;
 	private MCFunction init = null;

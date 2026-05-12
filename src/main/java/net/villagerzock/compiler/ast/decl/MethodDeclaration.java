@@ -2,6 +2,7 @@ package net.villagerzock.compiler.ast.decl;
 
 import net.villagerzock.compiler.ast.AstNode;
 import net.villagerzock.compiler.ast.SourceRange;
+import net.villagerzock.compiler.ast.expr.Expression;
 import net.villagerzock.compiler.ast.stmt.BlockStatement;
 import net.villagerzock.compiler.ast.type.TypeNode;
 import net.villagerzock.compiler.semantic.MethodSymbol;
@@ -22,6 +23,8 @@ public class MethodDeclaration extends AstNode implements Declaration {
 
 	public static class NativeBody {
 		private final String code;
+		private String analyzedCode;
+		private List<Expression> inlineExpressions = List.of();
 		private MCFunction associatedFunction;
 
         public NativeBody(String code) {
@@ -38,6 +41,19 @@ public class MethodDeclaration extends AstNode implements Declaration {
 
 		public String getCode() {
 			return code;
+		}
+
+		public String getAnalyzedCode() {
+			return analyzedCode == null ? code : analyzedCode;
+		}
+
+		public void setAnalyzedNative(String analyzedCode, List<Expression> inlineExpressions) {
+			this.analyzedCode = analyzedCode;
+			this.inlineExpressions = List.copyOf(inlineExpressions);
+		}
+
+		public List<Expression> inlineExpressions() {
+			return inlineExpressions;
 		}
 	}
 

@@ -76,16 +76,26 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
         List<Declaration> members = new ArrayList<>();
         if (isRecord){
-            for (ParameterDeclaration parameterDeclaration : visitParameters(ctx.parameterList())){
+            List<ParameterDeclaration> components = visitParameters(ctx.parameterList());
+            for (ParameterDeclaration parameterDeclaration : components){
                 FieldDeclaration fieldDeclaration = new FieldDeclaration(parameterDeclaration.type(),parameterDeclaration.name(),null);
                 members.add(fieldDeclaration);
             }
+            for (MCSParser.RecordMemberDeclContext member : ctx.recordBody().recordMemberDecl()){
+                members.add((Declaration) visit(member));
+            }
+            return new RecordDeclaration(name, components, members);
         }
         for (MCSParser.MemberDeclContext member : ctx.classBody().memberDecl()) {
             members.add((Declaration) visit(member));
         }
 
         return new ClassDeclaration(name, members);
+    }
+
+    @Override
+    public Node visitRecordMemberDecl(MCSParser.RecordMemberDeclContext ctx) {
+        return visit(ctx.methodDecl());
     }
 
     @Override
@@ -231,13 +241,22 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
     @Override
     public Node visitTypeName(MCSParser.TypeNameContext ctx) {
-        return new TypeNode(ctx.IDENTIFIER().getText());
+        if (ctx.typeName() != null) {
+            return new TypeNode(ctx.IDENTIFIER().getText() + "[" + ((TypeNode) visit(ctx.typeName())).name() + "]");
+        }
+
+        StringBuilder name = new StringBuilder(ctx.IDENTIFIER().getText());
+        for (int i = 0; i < ctx.LBRACKET().size(); i++) {
+            name.append("[]");
+        }
+
+        return new TypeNode(name.toString());
     }
 
     @Override
     public Node visitParameter(MCSParser.ParameterContext ctx) {
         TypeNode type = (TypeNode) visit(ctx.typeName());
-        String name = ctx.IDENTIFIER().getText();
+        String name = ctx.identifierName().getText();
 
         return new ParameterDeclaration(type, name);
     }
@@ -558,8 +577,16 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
             return visit(ctx.newExpression());
         }
 
-        if (ctx.IDENTIFIER() != null) {
-            return new IdentifierExpression(ctx.IDENTIFIER().getText());
+        if (ctx.arrayLiteralExpression() != null) {
+            return visit(ctx.arrayLiteralExpression());
+        }
+
+        if (ctx.compoundLiteralExpression() != null) {
+            return visit(ctx.compoundLiteralExpression());
+        }
+
+        if (ctx.identifierName() != null) {
+            return new IdentifierExpression(ctx.identifierName().getText());
         }
 
         return new GroupExpression((Expression) visit(ctx.expression()));
@@ -568,6 +595,36 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
     @Override
     public Node visitNewExpression(MCSParser.NewExpressionContext ctx) {
         return new NewExpression(ctx.IDENTIFIER().getText(),visitArguments(ctx.argumentList()));
+    }
+
+    @Override
+    public Node visitArrayLiteralExpression(MCSParser.ArrayLiteralExpressionContext ctx) {
+        List<Expression> values = new ArrayList<>();
+
+        for (MCSParser.ExpressionContext expression : ctx.expression()) {
+            values.add((Expression) visit(expression));
+        }
+
+        return new ArrayLiteralExpression(values);
+    }
+
+    @Override
+    public Node visitCompoundLiteralExpression(MCSParser.CompoundLiteralExpressionContext ctx) {
+        List<CompoundLiteralExpression.Entry> entries = new ArrayList<>();
+
+        for (MCSParser.CompoundEntryContext entry : ctx.compoundEntry()) {
+            String key;
+            if (entry.compoundKey().STRING() != null) {
+                key = entry.compoundKey().STRING().getText();
+                key = key.substring(1, key.length() - 1);
+            } else {
+                key = entry.compoundKey().IDENTIFIER().getText();
+            }
+
+            entries.add(new CompoundLiteralExpression.Entry(key, (Expression) visit(entry.expression())));
+        }
+
+        return new CompoundLiteralExpression(entries);
     }
 
     private List<Expression> visitArguments(MCSParser.ArgumentListContext ctx) {

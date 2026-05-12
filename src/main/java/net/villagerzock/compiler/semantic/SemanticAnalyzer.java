@@ -1,18 +1,27 @@
 package net.villagerzock.compiler.semantic;
 
 import net.villagerzock.compiler.ast.AstNode;
+import net.villagerzock.compiler.ast.AstBuilder;
+import net.villagerzock.compiler.ast.CompilationUnit;
 import net.villagerzock.compiler.ast.Node;
 import net.villagerzock.compiler.ast.SourceRange;
 import net.villagerzock.compiler.ast.decl.*;
 import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.*;
+import net.villagerzock.compiler.parser.MCSLexer;
+import net.villagerzock.compiler.parser.MCSParser;
+import org.antlr.v4.runtime.CharStreams;
+import org.antlr.v4.runtime.CommonTokenStream;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class SemanticAnalyzer {
 	private static final StaticImportDeclaration STD_STATIC_IMPORT = new StaticImportDeclaration(
 			new QualifiedPathNode("std", List.of("std", "Std", "*"))
 	);
+	private static final Pattern INLINE_EXPRESSION_PATTERN = Pattern.compile("\\$\\{([^}]*)\\}");
 
 	private final List<SemanticDiagnostic> diagnostics = new ArrayList<>();
 	private final Map<String, ProgramInfo> programsByPackage = new LinkedHashMap<>();
@@ -31,15 +40,36 @@ public final class SemanticAnalyzer {
 	private SemanticType createSemanticType(net.villagerzock.compiler.ast.type.TypeNode typeNode) {
 		SemanticType type = SemanticType.from(typeNode);
 
+		if (type != null && (type.kind() == SemanticType.Kind.ARRAY || type.kind() == SemanticType.Kind.DICTIONARY)) {
+			applyCurrentProgramNamespace(type.elementType());
+			return type;
+		}
+
 		if (type == null || type.isBuiltin() || type.isUnknown()) {
 			return type;
+		}
+
+		applyCurrentProgramNamespace(type);
+		return type;
+	}
+
+	private void applyCurrentProgramNamespace(SemanticType type) {
+		if (type == null || type.isUnknown()) {
+			return;
+		}
+
+		if (type.kind() == SemanticType.Kind.ARRAY || type.kind() == SemanticType.Kind.DICTIONARY) {
+			applyCurrentProgramNamespace(type.elementType());
+			return;
+		}
+
+		if (type.isBuiltin()) {
+			return;
 		}
 
 		ProgramNode node = currentProgram.node;
 		type.setNamespace(node.packagePath().namespace());
 		type.setPath(node.packagePath().path());
-
-		return type;
 	}
 
 	private SemanticType createClassSemanticType(ClassInfo classInfo) {
@@ -53,7 +83,7 @@ public final class SemanticAnalyzer {
 		return type;
 	}
 
-	public List<SemanticDiagnostic> analyze(List<? extends Node> nodes) {
+	public List<SemanticDiagnostic> analyze(CompilationUnit compilationUnit) {
 		diagnostics.clear();
 		programsByPackage.clear();
 		currentProgram = null;
@@ -66,9 +96,7 @@ public final class SemanticAnalyzer {
 		currentReturnType = null;
 		currentScope = null;
 
-		List<ProgramNode> programs = collectProgramNodes(nodes);
-
-		collectPrograms(programs);
+		collectPrograms(compilationUnit.programs());
 		collectAllClasses();
 		collectAllMembers();
 
@@ -83,23 +111,11 @@ public final class SemanticAnalyzer {
 		return List.copyOf(diagnostics);
 	}
 
-	public void analyzeOrThrow(List<? extends Node> nodes) {
-		List<SemanticDiagnostic> result = analyze(nodes);
+	public void analyzeOrThrow(CompilationUnit compilationUnit) {
+		List<SemanticDiagnostic> result = analyze(compilationUnit);
 		if (!result.isEmpty()) {
 			throw new SemanticException(result);
 		}
-	}
-
-	private List<ProgramNode> collectProgramNodes(List<? extends Node> nodes) {
-		List<ProgramNode> programs = new ArrayList<>();
-
-		for (Node node : nodes) {
-			if (node instanceof ProgramNode program) {
-				programs.add(program);
-			}
-		}
-
-		return programs;
 	}
 
 	private boolean isCurrentProgramLibrary() {
@@ -195,11 +211,22 @@ public final class SemanticAnalyzer {
 			} else if (member instanceof MethodDeclaration method) {
 				collectMethod(classInfo, method);
 			} else if (member instanceof ConstructorDeclaration constructor) {
+				if (classInfo.declaration instanceof RecordDeclaration) {
+					if (!isCurrentProgramLibrary()) {
+						error(
+								constructor,
+								"Constructors are not allowed in record '" + classInfo.qualifiedName() + "'."
+						);
+					}
+					continue;
+				}
 				collectConstructor(classInfo, constructor);
 			}
 		}
 
-		if (classInfo.constructors.isEmpty()) {
+		if (classInfo.declaration instanceof RecordDeclaration recordDeclaration) {
+			addRecordConstructor(classInfo, recordDeclaration);
+		} else if (classInfo.constructors.isEmpty()) {
 			addDefaultConstructor(classInfo);
 		}
 
@@ -208,6 +235,45 @@ public final class SemanticAnalyzer {
 		}
 
 		currentClass = null;
+	}
+
+	private void addRecordConstructor(ClassInfo classInfo, RecordDeclaration recordDeclaration) {
+		List<Symbol> parameters = new ArrayList<>();
+		Set<String> parameterNames = new HashSet<>();
+
+		for (ParameterDeclaration component : recordDeclaration.components()) {
+			if (!parameterNames.add(component.name())) {
+				if (!isCurrentProgramLibrary()) {
+					error(
+							component,
+							"Duplicate record component '" + component.name()
+									+ "' in record '" + classInfo.qualifiedName() + "'."
+					);
+				}
+				continue;
+			}
+
+			SemanticType parameterType = createSemanticType(component.type());
+			Symbol parameterSymbol = new Symbol(
+					component.name(),
+					parameterType,
+					SymbolKind.PARAMETER,
+					component
+			);
+			component.setResolvedSymbol(parameterSymbol);
+			parameters.add(parameterSymbol);
+		}
+
+		ConstructorDeclaration declaration = new ConstructorDeclaration(
+				recordDeclaration.components(),
+				null,
+				SourceRange.UNKNOWN
+		);
+		declaration.setImplicitRecordConstructor(true);
+
+		ConstructorSymbol symbol = new ConstructorSymbol(List.copyOf(parameters), declaration);
+		declaration.setResolvedConstructorSymbol(symbol);
+		classInfo.constructors.add(symbol);
 	}
 
 	private void addDefaultConstructor(ClassInfo classInfo) {
@@ -835,6 +901,14 @@ public final class SemanticAnalyzer {
 		}
 
 		ConstructorDeclaration declaration = constructor.declaration();
+		if (declaration.isImplicitRecordConstructor()) {
+			currentConstructor = null;
+			currentCallableName = null;
+			currentReturnType = null;
+			currentScope = null;
+			return;
+		}
+
 		if (declaration.body() == null) {
 			error(declaration, "Constructor in class '" + currentClass.qualifiedName() + "' has no body.");
 			currentConstructor = null;
@@ -870,6 +944,13 @@ public final class SemanticAnalyzer {
 			}
 			if (declaration.nativeBody() == null) {
 				error(declaration, "Native method '" + declaration.name() + "' has no native body.");
+			} else {
+				checkInlineExpressions(
+						declaration.nativeBody().getCode(),
+						declaration.nativeBody(),
+						declaration,
+						"native body of method '" + declaration.name() + "'"
+				);
 			}
 
 			currentMethod = null;
@@ -990,6 +1071,7 @@ public final class SemanticAnalyzer {
 
 	private void checkVariableDeclaration(VariableDeclarationStatement variable) {
 		SemanticType declaredType = createSemanticType(variable.type());
+		variable.setConstant(true);
 
 		checkKnownType(variable.type(), declaredType, "variable '" + variable.name() + "'");
 
@@ -1062,12 +1144,17 @@ public final class SemanticAnalyzer {
 			result = SemanticType.INT;
 		} else if (expression instanceof StringLiteralExpression) {
 			result = SemanticType.STRING;
-		} else if (expression instanceof TStringLiteralExpression){
+		} else if (expression instanceof TStringLiteralExpression string){
+			checkInlineExpressions(string.rawValue(), string, string, "template string");
 			result = SemanticType.STRING;
 		} else if (expression instanceof BooleanLiteralExpression) {
 			result = SemanticType.BOOLEAN;
 		} else if (expression instanceof NewExpression newExpression) {
 			result = checkNewExpression(newExpression);
+		} else if (expression instanceof ArrayLiteralExpression arrayLiteral) {
+			result = checkArrayLiteral(arrayLiteral);
+		} else if (expression instanceof CompoundLiteralExpression compoundLiteral) {
+			result = checkCompoundLiteral(compoundLiteral);
 		} else if (expression instanceof IdentifierExpression identifier) {
 			Symbol symbol = currentScope.resolve(identifier.name());
 
@@ -1125,6 +1212,38 @@ public final class SemanticAnalyzer {
 
 		expression.setResolvedConstructorSymbol(constructor);
 		return createClassSemanticType(classInfo);
+	}
+
+	private SemanticType checkArrayLiteral(ArrayLiteralExpression expression) {
+		SemanticType elementType = null;
+
+		for (Expression value : expression.values()) {
+			elementType = mergeLiteralElementType(elementType, checkExpression(value));
+		}
+
+		return SemanticType.arrayOf(elementType == null ? SemanticType.ANY : elementType);
+	}
+
+	private SemanticType checkCompoundLiteral(CompoundLiteralExpression expression) {
+		SemanticType elementType = null;
+
+		for (CompoundLiteralExpression.Entry entry : expression.entries()) {
+			elementType = mergeLiteralElementType(elementType, checkExpression(entry.value()));
+		}
+
+		return SemanticType.dictionaryOf(elementType == null ? SemanticType.ANY : elementType);
+	}
+
+	private SemanticType mergeLiteralElementType(SemanticType current, SemanticType next) {
+		if (current == null) {
+			return next == null ? SemanticType.ANY : next;
+		}
+
+		if (current.isAssignableFrom(next) && next.isAssignableFrom(current)) {
+			return current;
+		}
+
+		return SemanticType.ANY;
 	}
 
 	private ConstructorSymbol resolveConstructor(ClassInfo classInfo, List<Expression> arguments) {
@@ -1267,6 +1386,7 @@ public final class SemanticAnalyzer {
 
 		SemanticType targetType = checkExpression(assignment.target());
 		SemanticType valueType = checkExpression(assignment.value());
+		markLocalVariableReassigned(assignment.target());
 
 		if (!targetType.isAssignableFrom(valueType)) {
 			error(
@@ -1285,6 +1405,7 @@ public final class SemanticAnalyzer {
 		}
 
 		SemanticType targetType = checkExpression(update.target());
+		markLocalVariableReassigned(update.target());
 
 		if (!SemanticType.INT.isAssignableFrom(targetType)) {
 			error(
@@ -1295,6 +1416,21 @@ public final class SemanticAnalyzer {
 		}
 
 		return targetType;
+	}
+
+	private void markLocalVariableReassigned(Expression target) {
+		if (!(target instanceof IdentifierExpression identifier)) {
+			return;
+		}
+
+		Symbol symbol = identifier.resolvedSymbol();
+		if (symbol == null || symbol.kind() != SymbolKind.LOCAL) {
+			return;
+		}
+
+		if (symbol.declaration() instanceof VariableDeclarationStatement variable) {
+			variable.setConstant(false);
+		}
 	}
 
 	private SemanticType checkCall(CallExpression call) {
@@ -1344,6 +1480,207 @@ public final class SemanticAnalyzer {
 		}
 
 		return method.returnType();
+	}
+
+	private void checkInlineExpressions(
+			String text,
+			TStringLiteralExpression target,
+			Node owner,
+			String context
+	) {
+		AnalyzedInlineText analyzed = analyzeInlineText(text, owner, context);
+		target.setAnalyzedTemplate(analyzed.text(), analyzed.expressions());
+	}
+
+	private void checkInlineExpressions(
+			String text,
+			MethodDeclaration.NativeBody target,
+			Node owner,
+			String context
+	) {
+		AnalyzedInlineText analyzed = analyzeInlineText(text, owner, context);
+		target.setAnalyzedNative(analyzed.text(), analyzed.expressions());
+	}
+
+	private AnalyzedInlineText analyzeInlineText(String text, Node owner, String context) {
+		if (text == null || text.isEmpty()) {
+			return new AnalyzedInlineText("", List.of());
+		}
+
+		StringBuilder analyzedText = new StringBuilder();
+		List<Expression> expressions = new ArrayList<>();
+		Matcher matcher = INLINE_EXPRESSION_PATTERN.matcher(text);
+		int cursor = 0;
+
+		while (matcher.find()) {
+			analyzedText.append(escapePercentMarkers(text.substring(cursor, matcher.start())));
+
+			String source = matcher.group(1);
+			Expression expression = parseInlineExpression(source, owner, context);
+			if (expression != null) {
+				SemanticType type = checkExpression(expression);
+				if (type != null && type.isVoid()) {
+					error(owner, "Inline expression '${" + source + "}' in " + context + " cannot be 'function'.");
+				}
+
+				String literal = inlineLiteralValue(expression);
+				if (literal != null) {
+					analyzedText.append(escapePercentMarkers(literal));
+				} else {
+					int index = expressions.size();
+					expressions.add(expression);
+					analyzedText.append('%').append(index).append('%');
+				}
+			}
+
+			cursor = matcher.end();
+		}
+
+		analyzedText.append(escapePercentMarkers(text.substring(cursor)));
+		return new AnalyzedInlineText(analyzedText.toString(), expressions);
+	}
+
+	private String escapePercentMarkers(String text) {
+		return text.replaceAll("%([^%]+)%", "\\\\%$1%");
+	}
+
+	private String inlineLiteralValue(Expression expression) {
+		if (expression instanceof NumberLiteralExpression number) {
+			return number.rawValue();
+		}
+
+		if (expression instanceof StringLiteralExpression string) {
+			return string.rawValue();
+		}
+
+		if (expression instanceof BooleanLiteralExpression bool) {
+			return Boolean.toString(bool.value());
+		}
+
+		if (expression instanceof GroupExpression group) {
+			return inlineLiteralValue(group.expression());
+		}
+
+		if (expression instanceof IdentifierExpression identifier) {
+			Symbol symbol = identifier.resolvedSymbol();
+			if (symbol != null
+					&& symbol.kind() == SymbolKind.LOCAL
+					&& symbol.declaration() instanceof VariableDeclarationStatement variable
+					&& variable.isConstant()) {
+				Expression initializer = variable.initializer() == null
+						? variable.type().resolvedType().getDefaultExpression()
+						: variable.initializer();
+				return inlineLiteralValue(initializer);
+			}
+			return null;
+		}
+
+		if (expression instanceof UnaryExpression unary) {
+			String operand = inlineLiteralValue(unary.operand());
+			if (operand == null) {
+				return null;
+			}
+
+			return switch (unary.operator()) {
+				case NEGATE -> parseIntLiteral(operand) == null
+						? null
+						: Integer.toString(-parseIntLiteral(operand));
+				case NOT -> parseBooleanLiteral(operand) == null
+						? null
+						: Boolean.toString(!parseBooleanLiteral(operand));
+			};
+		}
+
+		if (expression instanceof BinaryExpression binary) {
+			return inlineBinaryLiteral(binary);
+		}
+
+		return null;
+	}
+
+	private String inlineBinaryLiteral(BinaryExpression binary) {
+		String left = inlineLiteralValue(binary.left());
+		String right = inlineLiteralValue(binary.right());
+		if (left == null || right == null) {
+			return null;
+		}
+
+		Integer leftInt = parseIntLiteral(left);
+		Integer rightInt = parseIntLiteral(right);
+		if (leftInt != null && rightInt != null) {
+			return switch (binary.operator()) {
+				case ADD -> Integer.toString(leftInt + rightInt);
+				case SUBTRACT -> Integer.toString(leftInt - rightInt);
+				case MULTIPLY -> Integer.toString(leftInt * rightInt);
+				case DIVIDE -> rightInt == 0 ? null : Integer.toString(leftInt / rightInt);
+				case MODULO -> rightInt == 0 ? null : Integer.toString(leftInt % rightInt);
+				case GREATER -> Boolean.toString(leftInt > rightInt);
+				case LESS -> Boolean.toString(leftInt < rightInt);
+				case GREATER_EQUAL -> Boolean.toString(leftInt >= rightInt);
+				case LESS_EQUAL -> Boolean.toString(leftInt <= rightInt);
+				case EQUAL -> Boolean.toString(leftInt.equals(rightInt));
+				case NOT_EQUAL -> Boolean.toString(!leftInt.equals(rightInt));
+				default -> null;
+			};
+		}
+
+		Boolean leftBool = parseBooleanLiteral(left);
+		Boolean rightBool = parseBooleanLiteral(right);
+		if (leftBool != null && rightBool != null) {
+			return switch (binary.operator()) {
+				case LOGICAL_AND -> Boolean.toString(leftBool && rightBool);
+				case LOGICAL_OR -> Boolean.toString(leftBool || rightBool);
+				case EQUAL -> Boolean.toString(leftBool.equals(rightBool));
+				case NOT_EQUAL -> Boolean.toString(!leftBool.equals(rightBool));
+				default -> null;
+			};
+		}
+
+		return switch (binary.operator()) {
+			case ADD -> left + right;
+			case EQUAL -> Boolean.toString(left.equals(right));
+			case NOT_EQUAL -> Boolean.toString(!left.equals(right));
+			default -> null;
+		};
+	}
+
+	private Integer parseIntLiteral(String raw) {
+		if (raw.contains(".") || raw.endsWith("f") || raw.endsWith("F")) {
+			return null;
+		}
+
+		try {
+			return Integer.parseInt(raw);
+		} catch (NumberFormatException e) {
+			return null;
+		}
+	}
+
+	private Boolean parseBooleanLiteral(String raw) {
+		if ("true".equals(raw)) {
+			return true;
+		}
+		if ("false".equals(raw)) {
+			return false;
+		}
+		return null;
+	}
+
+	private Expression parseInlineExpression(String source, Node owner, String context) {
+		MCSLexer lexer = new MCSLexer(CharStreams.fromString(source));
+		CommonTokenStream tokens = new CommonTokenStream(lexer);
+		MCSParser parser = new MCSParser(tokens);
+
+		MCSParser.InlineExpressionContext inlineExpression = parser.inlineExpression();
+		if (parser.getNumberOfSyntaxErrors() > 0) {
+			error(owner, "Invalid inline expression '${" + source + "}' in " + context + ".");
+			return null;
+		}
+
+		return new AstBuilder().visitInlineExpression(inlineExpression);
+	}
+
+	private record AnalyzedInlineText(String text, List<Expression> expressions) {
 	}
 
 	private MethodSymbol resolveMethod(Expression callee) {
@@ -1495,7 +1832,13 @@ public final class SemanticAnalyzer {
 		if (type.equals(SemanticType.INT)
 				|| type.equals(SemanticType.STRING)
 				|| type.equals(SemanticType.BOOLEAN)
-				|| type.equals(SemanticType.VOID)) {
+				|| type.equals(SemanticType.VOID)
+				|| type.equals(SemanticType.ANY)) {
+			return;
+		}
+
+		if (type.kind() == SemanticType.Kind.ARRAY || type.kind() == SemanticType.Kind.DICTIONARY) {
+			checkKnownType(node, type.elementType(), elementName);
 			return;
 		}
 
@@ -1570,6 +1913,10 @@ public final class SemanticAnalyzer {
 
 		if (node instanceof StaticImportDeclaration staticImportDeclaration) {
 			return staticImportName(staticImportDeclaration);
+		}
+
+		if (node instanceof RecordDeclaration recordDeclaration) {
+			return recordDeclaration.name();
 		}
 
 		if (node instanceof ClassDeclaration classDeclaration) {

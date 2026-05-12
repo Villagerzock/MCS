@@ -1,12 +1,13 @@
 package net.villagerzock.compiler.gen;
 
-import net.villagerzock.compiler.ast.AstBuilder;
+import net.villagerzock.compiler.ast.CompilationUnit;
 import net.villagerzock.compiler.ast.decl.*;
 import net.villagerzock.compiler.ast.expr.*;
 import net.villagerzock.compiler.ast.stmt.*;
-import net.villagerzock.compiler.parser.MCSLexer;
-import net.villagerzock.compiler.parser.MCSParser;
 import net.villagerzock.compiler.semantic.MethodSymbol;
+import net.villagerzock.compiler.semantic.SemanticType;
+import net.villagerzock.compiler.semantic.Symbol;
+import net.villagerzock.compiler.semantic.SymbolKind;
 import net.villagerzock.mcfunction.ICommandPart;
 import net.villagerzock.mcfunction.LightMCFunction;
 import net.villagerzock.mcfunction.MCFunction;
@@ -16,9 +17,8 @@ import net.villagerzock.mcfunction.valueTargeting.AbstractValueTarget;
 import net.villagerzock.mcfunction.valueTargeting.DataValueTarget;
 import net.villagerzock.mcfunction.valueTargeting.ScoreboardValueTarget;
 import net.villagerzock.snbt.SnbtCompound;
-import org.antlr.v4.runtime.CharStream;
-import org.antlr.v4.runtime.CharStreams;
-import org.antlr.v4.runtime.CommonTokenStream;
+import net.villagerzock.snbt.SnbtElement;
+import net.villagerzock.snbt.SnbtList;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -30,18 +30,18 @@ import static net.villagerzock.snbt.Snbt.*;
 
 public class Generator {
 
-    public MCFunctionUnit generate(List<ProgramNode> nodes) {
+    public MCFunctionUnit generate(CompilationUnit compilationUnit) {
         PathStack pathStack = new PathStack();
         MCFunctionUnit unit = new MCFunctionUnit();
 
-        for (ProgramNode node : nodes) {
+        for (ProgramNode node : compilationUnit.programs()) {
             if (node.isLib()) continue;
             pathStack.push(node.packagePath().path());
             generateClasses(node, unit, pathStack);
             pathStack.pop();
         }
 
-        for (ProgramNode node : nodes) {
+        for (ProgramNode node : compilationUnit.programs()) {
             if (node.isLib()) continue;
             pathStack.push(node.packagePath().path());
 
@@ -140,7 +140,7 @@ public class Generator {
             if (decl instanceof MethodDeclaration methodDeclaration) {
                 if (methodDeclaration.isNative()) {
                     generateNative(
-                            methodDeclaration.nativeBody().getCode(),
+                            methodDeclaration.nativeBody(),
                             unit,
                             methodDeclaration.getFunction(),
                             pathStack,
@@ -174,32 +174,31 @@ public class Generator {
     }
 
     private void generateNative(
-            String nativeCode,
+            MethodDeclaration.NativeBody nativeBody,
             MCFunctionUnit unit,
             MCFunction function,
             PathStack pathStack,
             String baseName,
             String namespace
     ) {
-        String[] lines = nativeCode.split("\n");
-        Pattern pattern = Pattern.compile("\\$\\{([^}]*)\\}");
-        AstBuilder astBuilder = new AstBuilder();
+        String[] lines = nativeBody.getAnalyzedCode().split("\n");
+        Pattern pattern = Pattern.compile("(?<!\\\\)%([0-9]+)%");
 
         boolean useNewFunction = false;
         int macroCount = 0;
 
-        Map<String, String> expressionToMacroMap = new HashMap<>();
+        Map<Integer, String> expressionToMacroMap = new HashMap<>();
 
         for (int i = 0; i < lines.length; i++) {
             Matcher matcher = pattern.matcher(lines[i]);
 
             while (matcher.find()) {
-                String expression = matcher.group(1);
+                int expressionIndex = Integer.parseInt(matcher.group(1));
 
-                if (expressionToMacroMap.containsKey(expression)) {
+                if (expressionToMacroMap.containsKey(expressionIndex)) {
                     lines[i] = lines[i].replace(
-                            "${%s}".formatted(expression),
-                            "$(%s)".formatted(expressionToMacroMap.get(expression))
+                            "%%%s%%".formatted(expressionIndex),
+                            "$(%s)".formatted(expressionToMacroMap.get(expressionIndex))
                     );
 
                     if (!lines[i].startsWith("$")) {
@@ -211,11 +210,7 @@ public class Generator {
 
                 useNewFunction = true;
 
-                MCSLexer lexer = new MCSLexer(CharStreams.fromString(expression));
-                CommonTokenStream tokens = new CommonTokenStream(lexer);
-                MCSParser parser = new MCSParser(tokens);
-
-                Expression expr = (Expression) astBuilder.visit(parser.inlineExpression());
+                Expression expr = nativeBody.inlineExpressions().get(expressionIndex);
 
                 String macroName = "m_%s".formatted(macroCount++);
 
@@ -229,16 +224,18 @@ public class Generator {
                 ));
 
                 lines[i] = lines[i].replace(
-                        "${%s}".formatted(expression),
+                        "%%%s%%".formatted(expressionIndex),
                         "$(%s)".formatted(macroName)
                 );
 
-                expressionToMacroMap.put(expression, macroName);
+                expressionToMacroMap.put(expressionIndex, macroName);
 
                 if (!lines[i].startsWith("$")) {
                     lines[i] = "$%s".formatted(lines[i]);
                 }
             }
+
+            lines[i] = lines[i].replace("\\%", "%");
         }
 
         MCFunction functionWrite = function;
@@ -575,21 +572,7 @@ public class Generator {
                 continue;
             }
 
-            if (param instanceof StringLiteralExpression stringLiteralExpression) {
-                locals.putString(name, stringLiteralExpression.rawValue());
-            } else if (param instanceof NumberLiteralExpression number) {
-                String raw = number.rawValue();
-
-                if (raw.endsWith("f") || raw.endsWith("F")) {
-                    locals.put(name, floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1))));
-                } else if (raw.contains(".")) {
-                    locals.put(name, doubleNumber(Double.parseDouble(raw)));
-                } else {
-                    locals.put(name, integer(Integer.parseInt(raw)));
-                }
-            } else if (param instanceof BooleanLiteralExpression bool) {
-                locals.put(name, bool(bool.value()));
-            } else {
+            if (!putImmediateParam(locals, name, param)) {
                 delayedParams.add(new DelayedParam(name, param));
             }
         }
@@ -636,6 +619,42 @@ public class Generator {
     private record InlineMacro(String name, Expression expression) {
     }
 
+    private record Marker(int start, int end, int index) {
+    }
+
+    private boolean putImmediateParam(SnbtCompound locals, String name, Expression param) {
+        if (param instanceof StringLiteralExpression stringLiteralExpression) {
+            locals.putString(name, stringLiteralExpression.rawValue());
+            return true;
+        }
+
+        if (param instanceof TStringLiteralExpression string
+                && (string.inlineExpressions().isEmpty() || findMarker(string.analyzedText(), 0) == null)) {
+            locals.putString(name, string.analyzedText().replace("\\%", "%"));
+            return true;
+        }
+
+        if (param instanceof NumberLiteralExpression number) {
+            String raw = number.rawValue();
+
+            if (raw.endsWith("f") || raw.endsWith("F")) {
+                locals.put(name, floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1))));
+            } else if (raw.contains(".")) {
+                locals.put(name, doubleNumber(Double.parseDouble(raw)));
+            } else {
+                locals.put(name, integer(Integer.parseInt(raw)));
+            }
+            return true;
+        }
+
+        if (param instanceof BooleanLiteralExpression bool) {
+            locals.put(name, bool(bool.value()));
+            return true;
+        }
+
+        return false;
+    }
+
     private ICommandPart generateExpression(
             Expression expression,
             MCFunctionUnit unit,
@@ -679,7 +698,11 @@ public class Generator {
         if (expression instanceof TStringLiteralExpression string) {
             SnbtCompound compound = compound();
 
-            String raw = string.rawValue();
+            String raw = string.analyzedText();
+            if (string.inlineExpressions().isEmpty() || findMarker(raw, 0) == null) {
+                return target.storeFrom(new StringValueTarget(raw.replace("\\%", "%")));
+            }
+
             StringBuilder resultString = new StringBuilder();
 
             List<InlineMacro> macros = new ArrayList<>();
@@ -688,32 +711,26 @@ public class Generator {
             int i = 0;
 
             while (i < raw.length()) {
-                int start = raw.indexOf("${", i);
+                Marker marker = findMarker(raw, i);
 
-                if (start == -1) {
+                if (marker == null) {
                     resultString.append(raw.substring(i));
                     break;
                 }
 
-                resultString.append(raw, i, start);
-
-                int end = raw.indexOf("}", start + 2);
-                if (end == -1) {
-                    throw new IllegalStateException("Unclosed ${ in tString: " + raw);
-                }
-
-                String inlineSource = raw.substring(start + 2, end);
+                resultString.append(raw, i, marker.start());
                 String macroName = "m_" + macroIndex++;
 
-                Expression inlineExpression = parseInlineExpression(inlineSource);
+                Expression inlineExpression = string.inlineExpressions().get(marker.index());
                 macros.add(new InlineMacro(macroName, inlineExpression));
 
                 resultString.append("$(").append(macroName).append(")");
 
-                i = end + 1;
+                i = marker.end();
             }
 
-            compound.put("text", string(resultString.toString()));
+            String result = resultString.toString().replace("\\%", "%");
+            compound.put("text", string(result));
 
             function.addCommand(new TmpMacroWrite(compound.toSnbt()));
 
@@ -735,7 +752,7 @@ public class Generator {
             );
 
             ICommandPart writeResult = target.storeFrom(
-                    new StringValueTarget(resultString.toString())
+                    new StringValueTarget(result)
             );
 
             macroFunction.addCommand(new MacroCommandPart(writeResult));
@@ -747,10 +764,23 @@ public class Generator {
             return target.storeFrom(new StringValueTarget(string.rawValue()));
         }
 
+        if (expression instanceof ArrayLiteralExpression arrayLiteral) {
+            return generateNbtLiteralExpression(arrayLiteral, unit, function, pathStack, target, baseName);
+        }
+
+        if (expression instanceof CompoundLiteralExpression compoundLiteral) {
+            return generateNbtLiteralExpression(compoundLiteral, unit, function, pathStack, target, baseName);
+        }
+
         if (expression instanceof IdentifierExpression identifier) {
             if (identifier.name().equals("this")) {
                 function.setUsesMacros(true);
                 return target.storeFrom(new DataValueTarget(macroPath("this")));
+            }
+
+            Expression constantLiteral = constantLocalLiteral(identifier);
+            if (constantLiteral != null) {
+                return generateExpression(constantLiteral, unit, function, pathStack, target, baseName);
             }
 
             return target.storeFrom(new DataValueTarget(localPath(identifier.name())));
@@ -811,6 +841,24 @@ public class Generator {
                     "storage mcs:memory tmp.macro.this"
             ));
 
+            if (constructorDeclaration.isImplicitRecordConstructor()) {
+                for (int i = 0; i < newExpression.arguments().size(); i++) {
+                    Expression arg = newExpression.arguments().get(i);
+                    String fieldName = constructorDeclaration.parameters().get(i).name();
+
+                    commands.add(new MacroCommandPart(generateExpression(
+                            arg,
+                            unit,
+                            function,
+                            pathStack,
+                            new DataValueTarget("storage mcs:memory heap[$(this)]." + fieldName),
+                            baseName + "_record_field_" + fieldName
+                    )));
+                }
+
+                return new MultiPart(commands);
+            }
+
             for (int i = 0; i < newExpression.arguments().size(); i++) {
                 Expression arg = newExpression.arguments().get(i);
                 String paramName = constructorDeclaration.parameters().get(i).name();
@@ -835,6 +883,128 @@ public class Generator {
         throw new IllegalStateException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
+    private Marker findMarker(String text, int fromIndex) {
+        Matcher matcher = Pattern.compile("(?<!\\\\)%([0-9]+)%").matcher(text);
+        if (!matcher.find(fromIndex)) {
+            return null;
+        }
+
+        return new Marker(matcher.start(), matcher.end(), Integer.parseInt(matcher.group(1)));
+    }
+
+    private ICommandPart generateNbtLiteralExpression(
+            Expression expression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            AbstractValueTarget target,
+            String baseName
+    ) {
+        List<DelayedNbtValue> delayedValues = new ArrayList<>();
+        SnbtElement literal = nbtLiteral(expression, delayedValues, "");
+        List<ICommandPart> commands = new ArrayList<>();
+
+        commands.add(new TmpWrite(literal.toSnbt()));
+
+        for (DelayedNbtValue delayed : delayedValues) {
+            commands.add(generateExpression(
+                    delayed.expression(),
+                    unit,
+                    function,
+                    pathStack,
+                    new DataValueTarget("storage mcs:memory tmp" + delayed.path()),
+                    baseName + "_nbt_" + delayedValues.indexOf(delayed)
+            ));
+        }
+
+        commands.add(target.storeFrom(new DataValueTarget("storage mcs:memory tmp")));
+        return new MultiPart(commands);
+    }
+
+    private SnbtElement nbtLiteral(Expression expression, List<DelayedNbtValue> delayedValues, String path) {
+        if (expression instanceof NumberLiteralExpression number) {
+            String raw = number.rawValue();
+            if (raw.endsWith("f") || raw.endsWith("F")) {
+                return floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1)));
+            }
+            if (raw.contains(".")) {
+                return doubleNumber(Double.parseDouble(raw));
+            }
+            return integer(Integer.parseInt(raw));
+        }
+
+        if (expression instanceof StringLiteralExpression string) {
+            return string(string.rawValue());
+        }
+
+        if (expression instanceof BooleanLiteralExpression bool) {
+            return bool(bool.value());
+        }
+
+        if (expression instanceof ArrayLiteralExpression arrayLiteral) {
+            SnbtList list = list();
+            for (int i = 0; i < arrayLiteral.values().size(); i++) {
+                list.add(nbtLiteral(arrayLiteral.values().get(i), delayedValues, path + "[" + i + "]"));
+            }
+            return list;
+        }
+
+        if (expression instanceof CompoundLiteralExpression compoundLiteral) {
+            SnbtCompound compound = compound();
+            for (CompoundLiteralExpression.Entry entry : compoundLiteral.entries()) {
+                compound.put(entry.key(), nbtLiteral(entry.value(), delayedValues, path + "." + nbtPathKey(entry.key())));
+            }
+            return compound;
+        }
+
+        delayedValues.add(new DelayedNbtValue(path, expression));
+        return raw("null");
+    }
+
+    private String nbtPathKey(String key) {
+        if (key.matches("[A-Za-z0-9_+.-]+")) {
+            return key;
+        }
+        return "\"" + key.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private record DelayedNbtValue(String path, Expression expression) {
+    }
+
+    private Expression constantLocalLiteral(IdentifierExpression identifier) {
+        Symbol symbol = identifier.resolvedSymbol();
+        if (symbol == null || symbol.kind() != SymbolKind.LOCAL) {
+            return null;
+        }
+
+        if (!(symbol.declaration() instanceof VariableDeclarationStatement variable) || !variable.isConstant()) {
+            return null;
+        }
+
+        Expression initializer = variable.initializer();
+        if (initializer == null) {
+            initializer = variable.type().resolvedType().getDefaultExpression();
+        }
+
+        if (!isPrimitiveType(variable.type().resolvedType()) || !isLiteralExpression(initializer)) {
+            return null;
+        }
+
+        return initializer;
+    }
+
+    private boolean isPrimitiveType(SemanticType type) {
+        return SemanticType.INT.equals(type)
+                || SemanticType.STRING.equals(type)
+                || SemanticType.BOOLEAN.equals(type);
+    }
+
+    private boolean isLiteralExpression(Expression expression) {
+        return expression instanceof NumberLiteralExpression
+                || expression instanceof StringLiteralExpression
+                || expression instanceof BooleanLiteralExpression;
+    }
+
     private ICommandPart generateFieldGetterExpression(
             Expression fieldExpression,
             FieldDeclaration fieldDeclaration,
@@ -844,8 +1014,6 @@ public class Generator {
             AbstractValueTarget target,
             String baseName
     ) {
-        String resultName = baseName + "_field_result";
-
         return new MultiPart(List.of(
                 writeFieldPointerMacro(
                         fieldExpression,
@@ -854,11 +1022,8 @@ public class Generator {
                         pathStack,
                         baseName + "_field_ptr"
                 ),
-                new ExecuteStoreResultScore(
-                        resultName,
-                        new FunctionCall(fieldDeclaration.getGetter(), 2)
-                ),
-                target.storeFrom(new ScoreboardValueTarget(resultName))
+                new FunctionCall(fieldDeclaration.getGetter(), 2),
+                target.storeFrom(new DataValueTarget("storage mcs:memory tmp"))
         ));
     }
 
@@ -1249,23 +1414,6 @@ public class Generator {
         return false;
     }
 
-    private Expression parseInlineExpression(String source) {
-        CharStream input = CharStreams.fromString(source);
-
-        MCSLexer lexer = new MCSLexer(input);
-        CommonTokenStream tokens = new CommonTokenStream(lexer);
-        MCSParser parser = new MCSParser(tokens);
-
-        MCSParser.InlineExpressionContext ctx = parser.inlineExpression();
-
-        if (parser.getNumberOfSyntaxErrors() > 0) {
-            throw new IllegalStateException("Invalid inline expression in tString: " + source);
-        }
-
-        AstBuilder builder = new AstBuilder();
-        return builder.visitInlineExpression(ctx);
-    }
-
     private ICommandPart generateCallExpression(
             CallExpression callExpression,
             MCFunctionUnit unit,
@@ -1288,21 +1436,7 @@ public class Generator {
                 continue;
             }
 
-            if (param instanceof StringLiteralExpression stringLiteralExpression) {
-                locals.putString(name, stringLiteralExpression.rawValue());
-            } else if (param instanceof NumberLiteralExpression number) {
-                String raw = number.rawValue();
-
-                if (raw.endsWith("f") || raw.endsWith("F")) {
-                    locals.put(name, floatNumber(Float.parseFloat(raw.substring(0, raw.length() - 1))));
-                } else if (raw.contains(".")) {
-                    locals.put(name, doubleNumber(Double.parseDouble(raw)));
-                } else {
-                    locals.put(name, integer(Integer.parseInt(raw)));
-                }
-            } else if (param instanceof BooleanLiteralExpression bool) {
-                locals.put(name, bool(bool.value()));
-            } else {
+            if (!putImmediateParam(locals, name, param)) {
                 delayedParams.add(new DelayedParam(name, param));
             }
         }

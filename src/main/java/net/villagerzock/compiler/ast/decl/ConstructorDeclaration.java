@@ -13,6 +13,7 @@ public class ConstructorDeclaration extends AstNode implements Declaration {
 	private final List<ParameterDeclaration> parameters;
 	private final BlockStatement body;
 	private ConstructorSymbol constructorSymbol;
+	private boolean implicitRecordConstructor;
 
 	public ConstructorDeclaration(List<ParameterDeclaration> parameters, BlockStatement body) {
 		this(parameters, body, SourceRange.UNKNOWN);
@@ -30,6 +31,14 @@ public class ConstructorDeclaration extends AstNode implements Declaration {
 
 	public BlockStatement body() {
 		return body;
+	}
+
+	public boolean isImplicitRecordConstructor() {
+		return implicitRecordConstructor;
+	}
+
+	public void setImplicitRecordConstructor(boolean implicitRecordConstructor) {
+		this.implicitRecordConstructor = implicitRecordConstructor;
 	}
 
 	@Override

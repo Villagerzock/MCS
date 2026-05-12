@@ -1,19 +1,17 @@
 package net.villagerzock.compiler.gen;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import net.villagerzock.compiler.ast.CompilationUnit;
 import net.villagerzock.compiler.ast.decl.*;
-import net.villagerzock.mcfunction.MCFunctionUnit;
 
-import java.lang.reflect.Parameter;
 import java.nio.file.Path;
 import java.util.List;
 
 public class LibGenerator {
     public record JsonFile(Path path, JsonArray jsonElement){}
-    public JsonFile[] generate(List<ProgramNode> nodes){
-        nodes = nodes.stream().filter((node)->!node.isLib()).toList();
+    public JsonFile[] generate(CompilationUnit compilationUnit){
+        List<ProgramNode> nodes = compilationUnit.sourcePrograms();
         JsonFile[] files = new JsonFile[nodes.size()];
         for(int i = 0; i < files.length; i++){
             ProgramNode node = nodes.get(i);

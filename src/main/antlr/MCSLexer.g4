@@ -23,6 +23,7 @@ TRUE : 'true';
 FALSE : 'false';
 CONSTRUCTOR : 'constructor';
 NEW : 'new';
+DATATYPE: 'datatype';
 NATIVE_BLOCK_START
 	: {expectNativeBlock}? '{'
 		{

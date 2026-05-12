@@ -29,11 +29,14 @@ pathTail
 	;
 
 classDecl
-	: (CLASS IDENTIFIER | RECORD IDENTIFIER LPAREN parameterList? RPAREN) classBody
+	: (CLASS IDENTIFIER classBody | RECORD IDENTIFIER LPAREN parameterList? RPAREN recordBody)
 	;
 
 classBody
 	: LBRACE memberDecl* RBRACE
+	;
+recordBody
+	: LBRACE recordMemberDecl* RBRACE
 	;
 
 memberDecl
@@ -42,6 +45,13 @@ memberDecl
 	| constructorDecl
 	| classDecl
 	;
+recordMemberDecl
+	: methodDecl
+	;
+
+dataDecl
+    : DATATYPE IDENTIFIER IDENTIFIER
+    ;
 
 constructorDecl
 	: CONSTRUCTOR LPAREN parameterList? RPAREN block
@@ -78,7 +88,8 @@ returnType
 	;
 
 typeName
-	: IDENTIFIER
+	: IDENTIFIER LBRACKET typeName RBRACKET
+	| IDENTIFIER (LBRACKET RBRACKET)*
 	;
 
 parameterList
@@ -86,7 +97,12 @@ parameterList
 	;
 
 parameter
-	: typeName IDENTIFIER
+	: typeName identifierName
+	;
+
+identifierName
+	: IDENTIFIER
+	| DATATYPE
 	;
 
 block
@@ -207,7 +223,7 @@ primaryExpression
 	| newExpression
 	| arrayLiteralExpression
 	| compoundLiteralExpression
-	| IDENTIFIER
+	| identifierName
 	| LPAREN expression RPAREN
 	;
 

@@ -11,6 +11,7 @@ public final class VariableDeclarationStatement extends AstNode implements State
 	private final TypeNode type;
 	private final String name;
 	private final Expression initializer;
+	private boolean constant = true;
 
 	public VariableDeclarationStatement(TypeNode type, String name, Expression initializer) {
 		this(type, name, initializer, SourceRange.UNKNOWN);
@@ -42,6 +43,14 @@ public final class VariableDeclarationStatement extends AstNode implements State
 
 	public void setResolvedSymbol(Symbol resolvedSymbol) {
 		this.resolvedSymbol = resolvedSymbol;
+	}
+
+	public boolean isConstant() {
+		return constant;
+	}
+
+	public void setConstant(boolean constant) {
+		this.constant = constant;
 	}
 
 	@Override

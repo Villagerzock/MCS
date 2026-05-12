@@ -2,16 +2,20 @@ package net.villagerzock;
 
 import com.google.gson.*;
 import net.villagerzock.compiler.ast.AstBuilder;
+import net.villagerzock.compiler.ast.CompilationUnit;
 import net.villagerzock.compiler.ast.decl.*;
 import net.villagerzock.compiler.ast.type.TypeNode;
 import net.villagerzock.compiler.gen.Generator;
 import net.villagerzock.compiler.gen.LibGenerator;
+import net.villagerzock.compiler.optimization.Optimizer;
 import net.villagerzock.compiler.parser.MCSLexer;
 import net.villagerzock.compiler.parser.MCSParser;
 import net.villagerzock.compiler.semantic.SemanticAnalyzer;
 import net.villagerzock.mcfunction.LightMCFunction;
 import net.villagerzock.mcfunction.MCFunction;
 import net.villagerzock.mcfunction.MCFunctionUnit;
+import net.villagerzock.plugin.PluginSystem;
+import net.villagerzock.plugin.TaskType;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
@@ -49,6 +53,9 @@ public class Main {
 
         @Option(names = {"-cp", "--classpath"}, split = ";", description = "Specify the Classpath, Can be Split with ';'")
         public String[] classpath = new String[0];
+
+        @Option(names = {"-p","--plugins"}, split = ";",description = "A List of Plugins that will be loaded")
+        public String[] plugins = new String[0];
     }
 
     public static final String YELLOW = "\u001B[33m";
@@ -59,7 +66,16 @@ public class Main {
 
     public static void main(String[] args) {
         CommandLine cmd = new CommandLine(runtimeData);
-        cmd.parseArgs(args);
+
+        try {
+            cmd.parseArgs(args);
+        } catch (ParameterException e) {
+            System.err.println(e.getMessage());
+            cmd.usage(System.err);
+            return;
+        }
+
+        PluginSystem.collectPlugins();
 
         if (runtimeData.obfuscate) {
             System.out.println(YELLOW + "WARN: --obfuscate disables library metadata generation. IDE support (IntelliJ/VSC) will not have method/class information." + RESET);
@@ -81,8 +97,8 @@ public class Main {
             }
 
             AstBuilder astBuilder = new AstBuilder();
-            List<ProgramNode> nodes = new ArrayList<>();
-
+            CompilationUnit compilationUnit = new CompilationUnit();
+            PluginSystem.onTaskStarted(TaskType.PARSE, compilationUnit);
             for (File file : filesToCompile) {
                 if (!file.exists()) {
                     System.err.println("Datei nicht gefunden: " + file.getAbsolutePath());
@@ -104,7 +120,7 @@ public class Main {
                     }
 
                     ProgramNode ast = (ProgramNode) astBuilder.visit(programContext);
-                    nodes.add(ast);
+                    compilationUnit.addProgram(ast);
 
                     if (runtimeData.ast) {
                         System.out.println(ast);
@@ -124,19 +140,31 @@ public class Main {
                         System.err.println("Classpath-Eintrag existiert nicht: " + file.getAbsolutePath());
                         continue;
                     }
-                    List<ProgramNode> libNodes = loadLibrary(file);
-                    for (ProgramNode node : libNodes){
+                    CompilationUnit libraryUnit = loadLibrary(file);
+                    for (ProgramNode node : libraryUnit.programs()){
                         System.out.println(node);
                     }
-                    nodes.addAll(libNodes);
+                    compilationUnit.addCompilationUnit(libraryUnit);
                 }
             }
+            PluginSystem.onTaskFinished(TaskType.PARSE, compilationUnit);
+            PluginSystem.onTaskStarted(TaskType.ANALYSE, compilationUnit);
 
             SemanticAnalyzer analyzer = new SemanticAnalyzer();
-            analyzer.analyzeOrThrow(nodes);
+            analyzer.analyzeOrThrow(compilationUnit);
+            PluginSystem.onTaskFinished(TaskType.ANALYSE, compilationUnit);
+            PluginSystem.onTaskStarted(TaskType.OPTIMIZE, compilationUnit);
+            Optimizer optimizer = new Optimizer();
+            optimizer.optimize(compilationUnit);
+            analyzer.analyzeOrThrow(compilationUnit);
+
+            PluginSystem.onTaskFinished(TaskType.OPTIMIZE, compilationUnit);
+            PluginSystem.onTaskStarted(TaskType.GENERATE, compilationUnit);
 
             Generator generator = new Generator();
-            MCFunctionUnit unit = generator.generate(nodes);
+            MCFunctionUnit unit = generator.generate(compilationUnit);
+
+            PluginSystem.onTaskFinished(TaskType.GENERATE, compilationUnit);
 
             Path out = runtimeData.outputDirectory.resolve("data/");
             deleteRecursive(out);
@@ -144,7 +172,8 @@ public class Main {
 
             Gson prettyGson = new GsonBuilder().setPrettyPrinting().create();
             LibGenerator libGenerator = new LibGenerator();
-            LibGenerator.JsonFile[] jsonFiles = libGenerator.generate(nodes);
+
+            LibGenerator.JsonFile[] jsonFiles = libGenerator.generate(compilationUnit);
 
             for (LibGenerator.JsonFile jsonFile : jsonFiles) {
                 Path p = out.getParent().resolve(jsonFile.path());
@@ -188,7 +217,7 @@ public class Main {
         }
     }
 
-    private static List<ProgramNode> loadLibrary(File file) throws IOException {
+    private static CompilationUnit loadLibrary(File file) throws IOException {
         if (file.isDirectory()) {
             Path root = file.toPath();
             return loadFolderLibrary(root, root);
@@ -200,31 +229,31 @@ public class Main {
 
         if (isJson(file)) {
             try (InputStream is = new FileInputStream(file)) {
-                return List.of(loadLibraryFile(is, getSegments(file.toPath().getFileName().toString())));
+                return new CompilationUnit(List.of(loadLibraryFile(is, getSegments(file.toPath().getFileName().toString()))));
             }
         }
 
         if (looksLikeJson(file)) {
             try (InputStream is = new FileInputStream(file)) {
-                return List.of(loadLibraryFile(is, getSegments(stripExtension(file.getName()))));
+                return new CompilationUnit(List.of(loadLibraryFile(is, getSegments(stripExtension(file.getName())))));
             }
         }
 
         System.err.println("Classpath-Eintrag ist weder Ordner, Zip noch JSON-Lib: " + file.getAbsolutePath());
-        return List.of();
+        return new CompilationUnit();
     }
 
-    private static List<ProgramNode> loadFolderLibrary(Path current, Path root) throws IOException {
-        List<ProgramNode> nodes = new ArrayList<>();
+    private static CompilationUnit loadFolderLibrary(Path current, Path root) throws IOException {
+        CompilationUnit compilationUnit = new CompilationUnit();
 
         File[] files = current.toFile().listFiles();
         if (files == null) {
-            return nodes;
+            return compilationUnit;
         }
 
         for (File file : files) {
             if (file.isDirectory()) {
-                nodes.addAll(loadFolderLibrary(file.toPath(), root));
+                compilationUnit.addCompilationUnit(loadFolderLibrary(file.toPath(), root));
                 continue;
             }
 
@@ -236,15 +265,15 @@ public class Main {
             List<String> segments = getSegments(relative.toString());
 
             try (InputStream is = new FileInputStream(file)) {
-                nodes.add(loadLibraryFile(is, segments));
+                compilationUnit.addProgram(loadLibraryFile(is, segments));
             }
         }
 
-        return nodes;
+        return compilationUnit;
     }
 
-    private static List<ProgramNode> loadZipLibrary(File zipFile) throws IOException {
-        List<ProgramNode> nodes = new ArrayList<>();
+    private static CompilationUnit loadZipLibrary(File zipFile) throws IOException {
+        CompilationUnit compilationUnit = new CompilationUnit();
 
         try (ZipFile zip = new ZipFile(zipFile)) {
             Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -263,12 +292,12 @@ public class Main {
                 }
 
                 try (InputStream is = zip.getInputStream(entry)) {
-                    nodes.add(loadLibraryFile(is, getSegments(name)));
+                    compilationUnit.addProgram(loadLibraryFile(is, getSegments(name)));
                 }
             }
         }
 
-        return nodes;
+        return compilationUnit;
     }
 
     private static List<String> getSegments(String path) {
