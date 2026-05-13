@@ -4,9 +4,11 @@ class Main {
     class Test {
         string field;
 
-        constructor(){
-            field = "Test";
+        constructor(string f){
+            field = f;
         }
+    }
+    record ARecord(string something){
     }
     static Test foo() {
         summon("breeze_wind_charge","~ ~ ~","");
@@ -15,12 +17,11 @@ class Main {
             print($"Hi i is ${i}");
         }
         print("Hi");
+        any var = "Hi";
+        Test test = new Test("Some Field");
+        ARecord testRecord = new ARecord("something");
 
-        Test test = new Test();
         print(test.field);
         return test;
-    }
-    function init(){
-        foo();
     }
 }

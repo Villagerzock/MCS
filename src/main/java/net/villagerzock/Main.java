@@ -140,8 +140,9 @@ public class Main {
                         System.err.println("Classpath-Eintrag existiert nicht: " + file.getAbsolutePath());
                         continue;
                     }
+
                     CompilationUnit libraryUnit = loadLibrary(file);
-                    for (ProgramNode node : libraryUnit.programs()){
+                    for (ProgramNode node : libraryUnit.programs()) {
                         System.out.println(node);
                     }
                     compilationUnit.addCompilationUnit(libraryUnit);
@@ -216,7 +217,6 @@ public class Main {
             e.printStackTrace();
         }
     }
-
     private static CompilationUnit loadLibrary(File file) throws IOException {
         if (file.isDirectory()) {
             Path root = file.toPath();
@@ -287,7 +287,7 @@ public class Main {
 
                 String name = entry.getName();
 
-                if (!name.endsWith(".json")) {
+                if (!name.endsWith(".json") || !name.startsWith("lib")) {
                     continue;
                 }
 
@@ -316,7 +316,7 @@ public class Main {
         }
 
         if (result.isBlank()) {
-            throw new IllegalArgumentException("Library JSON braucht einen Namen/Pfad.");
+            throw new IllegalArgumentException("Library JSON need a name/path.");
         }
 
         return Arrays.stream(result.split("/"))
@@ -328,7 +328,7 @@ public class Main {
         JsonElement parsed = gson.fromJson(new InputStreamReader(is, StandardCharsets.UTF_8), JsonElement.class);
 
         if (parsed == null || !parsed.isJsonArray()) {
-            throw new IllegalArgumentException("Library file muss ein JSON-Array als Root haben.");
+            throw new IllegalArgumentException("Library file requires a JSON-Array as root.");
         }
 
         JsonArray root = parsed.getAsJsonArray();
@@ -441,5 +441,68 @@ public class Main {
                         throw new RuntimeException(e);
                     }
                 });
+    }
+
+    private static List<ProgramNode> parseSourcePath(Path path, AstBuilder astBuilder) throws IOException {
+        List<ProgramNode> nodes = new ArrayList<>();
+
+        if (!Files.exists(path)) {
+            System.err.println("Source path not found: " + path.toAbsolutePath());
+            return nodes;
+        }
+
+        if (Files.isDirectory(path)) {
+            try (var stream = Files.walk(path)) {
+                List<File> files = stream
+                        .filter(Files::isRegularFile)
+                        .map(Path::toFile)
+                        .toList();
+
+                for (File file : files) {
+                    nodes.addAll(parseSourceFile(file, astBuilder));
+                }
+            }
+
+            return nodes;
+        }
+
+        nodes.addAll(parseSourceFile(path.toFile(), astBuilder));
+        return nodes;
+    }
+
+    private static List<ProgramNode> parseSourceFile(File file, AstBuilder astBuilder) throws IOException {
+        List<ProgramNode> nodes = new ArrayList<>();
+
+        if (!file.exists()) {
+            System.err.println("File not found: " + file.getAbsolutePath());
+            return nodes;
+        }
+
+        if (!file.isFile()) {
+            return nodes;
+        }
+
+        try (InputStream stream = new FileInputStream(file)) {
+            CharStream input = CharStreams.fromStream(stream);
+
+            MCSLexer lexer = new MCSLexer(input);
+            CommonTokenStream tokens = new CommonTokenStream(lexer);
+            MCSParser parser = new MCSParser(tokens);
+
+            MCSParser.ProgramContext programContext = parser.program();
+
+            if (parser.getNumberOfSyntaxErrors() > 0) {
+                throw new IllegalStateException("Parsing failed for " + file.getAbsolutePath() + ". Syntax errors: " + parser.getNumberOfSyntaxErrors());
+            }
+
+            ProgramNode ast = (ProgramNode) astBuilder.visit(programContext);
+            nodes.add(ast);
+
+            if (runtimeData.ast) {
+                System.out.println(ast);
+            }
+        }
+
+        return nodes;
     }
 }

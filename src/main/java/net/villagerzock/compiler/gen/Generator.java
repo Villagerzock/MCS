@@ -830,6 +830,44 @@ public class Generator {
 
             commands.add(target.storeFrom(new ScoreboardValueTarget(allocScore)));
 
+            if (constructorDeclaration.isImplicitRecordConstructor()) {
+                commands.add(new DataSetValue(
+                        "storage mcs:memory tmp_record",
+                        compound().toSnbt()
+                ));
+
+                for (int i = 0; i < newExpression.arguments().size(); i++) {
+                    Expression arg = newExpression.arguments().get(i);
+                    String fieldName = constructorDeclaration.parameters().get(i).name();
+
+                    commands.add(generateExpression(
+                            arg,
+                            unit,
+                            function,
+                            pathStack,
+                            new DataValueTarget("storage mcs:memory tmp_record." + fieldName),
+                            baseName + "_record_field_" + fieldName
+                    ));
+                }
+
+                commands.add(new DataToData(
+                        "storage mcs:memory tmp_record",
+                        "storage mcs:memory tmp"
+                ));
+
+                commands.add(new TmpMacroWrite(compound().toSnbt()));
+                commands.add(new ScoreToData(
+                        allocScore,
+                        "storage mcs:memory tmp_macro.this"
+                ));
+
+                LightMCFunction initNative = new LightMCFunction("std:std/std/init_native");
+                initNative.setUsesMacros(true);
+                commands.add(new FunctionCall(initNative, 2));
+
+                return new MultiPart(commands);
+            }
+
             commands.add(new TmpWrite(compound()
                     .put("locals", compound())
                     .put("macro", compound())
@@ -840,24 +878,6 @@ public class Generator {
                     allocScore,
                     "storage mcs:memory tmp.macro.this"
             ));
-
-            if (constructorDeclaration.isImplicitRecordConstructor()) {
-                for (int i = 0; i < newExpression.arguments().size(); i++) {
-                    Expression arg = newExpression.arguments().get(i);
-                    String fieldName = constructorDeclaration.parameters().get(i).name();
-
-                    commands.add(new MacroCommandPart(generateExpression(
-                            arg,
-                            unit,
-                            function,
-                            pathStack,
-                            new DataValueTarget("storage mcs:memory heap[$(this)]." + fieldName),
-                            baseName + "_record_field_" + fieldName
-                    )));
-                }
-
-                return new MultiPart(commands);
-            }
 
             for (int i = 0; i < newExpression.arguments().size(); i++) {
                 Expression arg = newExpression.arguments().get(i);
@@ -1042,7 +1062,8 @@ public class Generator {
                         unit,
                         function,
                         pathStack,
-                        baseName + "_field_ptr"
+                        baseName + "_field_ptr",
+                        "storage mcs:memory tmp_field_index"
                 ),
                 generateExpression(
                         valueExpression,
@@ -1051,6 +1072,10 @@ public class Generator {
                         pathStack,
                         new DataValueTarget("storage mcs:memory tmp_macro.value"),
                         baseName + "_field_value"
+                ),
+                new DataToData(
+                        "storage mcs:memory tmp_field_index",
+                        "storage mcs:memory tmp_macro.index"
                 ),
                 new FunctionCall(fieldDeclaration.getSetter(), 2)
         ));
@@ -1063,12 +1088,24 @@ public class Generator {
             PathStack pathStack,
             String baseName
     ) {
+        return writeFieldPointerMacro(fieldExpression, unit, function, pathStack, baseName, "storage mcs:memory tmp_macro.index");
+    }
+
+    private ICommandPart writeFieldPointerMacro(
+            Expression fieldExpression,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName,
+            String targetPath
+    ) {
         Expression ownerExpression = ownerExpressionOf(fieldExpression);
 
         if (ownerExpression == null) {
+            function.setUsesMacros(true);
             return new DataToData(
-                    localPath("this"),
-                    "storage mcs:memory tmp_macro.field"
+                    macroPath("this"),
+                    targetPath
             );
         }
 
@@ -1077,7 +1114,7 @@ public class Generator {
                 unit,
                 function,
                 pathStack,
-                new DataValueTarget("storage mcs:memory tmp_macro.field"),
+                new DataValueTarget(targetPath),
                 baseName
         );
     }

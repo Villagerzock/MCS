@@ -1,6 +1,7 @@
 plugins {
     id("java")
     id("antlr")
+    id("com.gradleup.shadow") version "9.0.0"
 }
 
 group = "net.villagerzock"
@@ -24,6 +25,9 @@ tasks.generateGrammarSource {
         "-visitor",
         "-package", "net.villagerzock.compiler.parser"
     )
+}
+tasks.shadowJar {
+    archiveClassifier.set("")
 }
 tasks.register<Exec>("runScript") {
     commandLine("bash", "run.sh")

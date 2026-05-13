@@ -27,7 +27,7 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         }
         List<StaticImportDeclaration> staticImports = new ArrayList<>();
         for (MCSParser.StaticImportDeclContext importDecl : ctx.staticImportDecl()) {
-            imports.add((ImportDeclaration) visit(importDecl));
+            staticImports.add((StaticImportDeclaration) visit(importDecl));
         }
 
         List<ClassDeclaration> classes = new ArrayList<>();

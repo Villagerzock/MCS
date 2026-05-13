@@ -1,4 +1,6 @@
 package std:std;
+import example:test.Main;
+import example:another.Another;
 
 class Std {
     static native function print(string s) {
@@ -25,7 +27,15 @@ data modify storage mcs:memory tmp from storage mcs:memory free[0]
 data remove storage mcs:memory free[0]
 return run data get storage mcs:memory tmp
     }
-    static native function free(int id){
-data modify storage mcs:memory free append value ${id}
+    static native function init(){
+$data modify storage mcs:memory heap[$(this)] set from storage mcs:memory tmp
+    }
+    static native function free(){
+$data modify storage mcs:memory free append value $(id)
+    }
+
+    static function test(){
+        Main.foo();
+        Another.init();
     }
 }

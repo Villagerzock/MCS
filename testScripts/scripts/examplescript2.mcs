@@ -1,0 +1,8 @@
+package example:another;
+import static example:test.Main.foo;
+
+class Another {
+    static function init(){
+        foo();
+    }
+}
