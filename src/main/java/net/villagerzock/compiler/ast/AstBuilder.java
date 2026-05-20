@@ -292,8 +292,45 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
         if (ctx.whileStatement() != null) {
             return visit(ctx.whileStatement());
         }
+        if (ctx.withStatement() != null) {
+            return visit(ctx.withStatement());
+        }
 
         return visit(ctx.expressionStatement());
+    }
+
+    @Override
+    public Node visitWithStatement(MCSParser.WithStatementContext ctx) {
+        List<WithStatement.Part> parts = new ArrayList<>();
+        for (MCSParser.WithPartContext part : ctx.withPart()) {
+            parts.add(visitWithPartValue(part));
+        }
+        return new WithStatement(parts, (Statement) visit(ctx.statement()));
+    }
+
+    private WithStatement.Part visitWithPartValue(MCSParser.WithPartContext ctx) {
+        return new WithStatement.Part(ctx.IDENTIFIER().getText(), visitWithValueValue(ctx.withValue()));
+    }
+
+    private WithStatement.Value visitWithValueValue(MCSParser.WithValueContext ctx) {
+        if (ctx.selector() != null && ctx.IDENTIFIER() == null) {
+            return new WithStatement.SelectorValue(ctx.selector().getText());
+        }
+        if (ctx.IDENTIFIER() != null) {
+            if (ctx.selector() != null) {
+                return new WithStatement.CallValue(
+                        ctx.IDENTIFIER().getText(),
+                        List.of(new SelectorExpression(ctx.selector().getText()))
+                );
+            }
+            return new WithStatement.CallValue(ctx.IDENTIFIER().getText(), visitArguments(ctx.argumentList()));
+        }
+
+        return new WithStatement.CoordinateValue(List.of(
+                (Expression) visit(ctx.expression(0)),
+                (Expression) visit(ctx.expression(1)),
+                (Expression) visit(ctx.expression(2))
+        ));
     }
 
     @Override
@@ -571,6 +608,10 @@ public class AstBuilder extends MCSParserBaseVisitor<Node> {
 
         if (ctx.FALSE() != null) {
             return new BooleanLiteralExpression(false);
+        }
+
+        if (ctx.selector() != null) {
+            return new SelectorExpression(ctx.selector().getText());
         }
 
         if (ctx.newExpression() != null){

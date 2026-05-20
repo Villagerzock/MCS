@@ -116,7 +116,47 @@ statement
 	| variableDeclStatement
 	| forStatement
 	| whileStatement
+	| withStatement
 	| expressionStatement
+	;
+
+withStatement
+	: WITH LPAREN withPart (COMMA withPart)* RPAREN statement
+	;
+
+withPart
+	: IDENTIFIER EQUAL withValue
+	;
+
+withValue
+	: selector
+	| IDENTIFIER LPAREN selector RPAREN
+	| IDENTIFIER LPAREN argumentList? RPAREN
+	| LPAREN expression COMMA expression COMMA expression RPAREN
+	;
+
+selector
+	: AT IDENTIFIER selectorArguments?
+	;
+
+selectorArguments
+	: LBRACKET selectorArgumentToken* RBRACKET
+	;
+
+selectorArgumentToken
+	: IDENTIFIER
+	| NUMBER
+	| STRING
+	| EQUAL
+	| DOT
+	| RANGE
+	| COMMA
+	| COLON
+	| EXCLAMATION
+	| MINUS
+	| PLUS
+	| AT
+	| TILDE
 	;
 
 whileStatement
@@ -220,6 +260,7 @@ primaryExpression
 	| STRING
 	| TRUE
 	| FALSE
+	| selector
 	| newExpression
 	| arrayLiteralExpression
 	| compoundLiteralExpression

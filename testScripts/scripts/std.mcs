@@ -1,41 +1,175 @@
 package std:std;
-import example:test.Main;
-import example:another.Another;
 
 class Std {
-    static native function print(string s) {
-tellraw @a ${s}
-    }
 
-    static native function summon(string type, string location,string data){
-summon ${type} ${location} ${data}
-    }
-    static native int invoke(string command){
+	class Entity {
+		string type;
+		string data;
+
+		constructor (string type, string data) {
+			this.type = type;
+			this.data = data;
+		}
+
+		function summon(Location location) {
+			Std.summon(this.type, location, this.data);
+		}
+
+		function summonHere() {
+			this.summon(relative(0, 0, 0));
+		}
+	}
+
+	class Item {
+		string id;
+		int count;
+		string data;
+
+		constructor (string id, int count, string data) {
+			this.id = id;
+			this.count = count;
+			this.data = data;
+		}
+
+		function give(PlayerTarget[] target) {
+			Std.give(target, this.id, this.count, this.data);
+		}
+	}
+
+	class Bossbar {
+		string id;
+
+		constructor (string id) {
+			this.id = id;
+		}
+
+		function create(string name) {
+			Std.bossbarAdd(this.id, name);
+		}
+
+		function remove() {
+			Std.bossbarRemove(this.id);
+		}
+
+		function setValue(int value) {
+			Std.bossbarSetValue(this.id, value);
+		}
+
+		function setMax(int max) {
+			Std.bossbarSetMax(this.id, max);
+		}
+
+		function setPlayers(PlayerTarget[] players) {
+			Std.bossbarSetPlayers(this.id, players);
+		}
+	}
+
+	static native function print(string s) {
+tellraw @a ${s}
+	}
+
+	static native function log(string s) {
+say ${s}
+	}
+
+	static native int invoke(string command) {
 ${command}
-    }
-    static native function allocate(){
+	}
+
+	static native function summon(string type, Location location, string data) {
+summon ${type} ${location} ${data}
+	}
+
+	static native function give(PlayerTarget[] target, string item, int count, string data) {
+give ${target} ${item}${data} ${count}
+	}
+
+	static native function kill(Target[] target) {
+kill ${target}
+	}
+
+	static native function tp(Target[] target, Location location) {
+tp ${target} ${location}
+	}
+
+	static native function effectGive(Target[] target, string effect, int seconds, int amplifier, bool particles) {
+effect give ${target} ${effect} ${seconds} ${amplifier} ${particles}
+	}
+
+	static native function effectClear(Target[] target) {
+effect clear ${target}
+	}
+
+	static native function tagAdd(Target[] target, string tag) {
+tag ${target} add ${tag}
+	}
+
+	static native function tagRemove(Target[] target, string tag) {
+tag ${target} remove ${tag}
+	}
+
+	static native function scoreboardSet(string target, string objective, int value) {
+scoreboard players set ${target} ${objective} ${value}
+	}
+
+	static native function scoreboardAdd(string target, string objective, int value) {
+scoreboard players add ${target} ${objective} ${value}
+	}
+
+	static native function scoreboardRemove(string target, string objective, int value) {
+scoreboard players remove ${target} ${objective} ${value}
+	}
+
+	static native function bossbarAdd(string id, string name) {
+bossbar add ${id} ${name}
+	}
+
+	static native function bossbarRemove(string id) {
+bossbar remove ${id}
+	}
+
+	static native function bossbarSetValue(string id, int value) {
+bossbar set ${id} value ${value}
+	}
+
+	static native function bossbarSetMax(string id, int max) {
+bossbar set ${id} max ${max}
+	}
+
+	static native function bossbarSetPlayers(string id, PlayerTarget[] players) {
+bossbar set ${id} players ${players}
+	}
+
+	static native function dataSet(string target, string path, string value) {
+data modify ${target} ${path} set value ${value}
+	}
+
+	static native function dataMerge(string target, string value) {
+data merge ${target} ${value}
+	}
+
+	static native function allocate() {
 execute if data storage mcs:memory free[0] run return run function std:std/std/reallocate_native
 return run function std:std/std/new_allocate_native
-    }
-    static native function newAllocate(){
+	}
+
+	static native function newAllocate() {
 execute store result storage mcs:memory tmp int 1 run data get storage mcs:memory heap
 data modify storage mcs:memory heap append value {}
 return run data get storage mcs:memory tmp
-    }
-    static native function reallocate(){
-data modify storage mcs:memory tmp from storage mcs:memory free[0]
+	}
+
+	static native function reallocate() {
+data modify storage mcs:memory tmp set from storage mcs:memory free[0]
 data remove storage mcs:memory free[0]
 return run data get storage mcs:memory tmp
-    }
-    static native function init(){
-$data modify storage mcs:memory heap[$(this)] set from storage mcs:memory tmp
-    }
-    static native function free(){
-$data modify storage mcs:memory free append value $(id)
-    }
+	}
 
-    static function test(){
-        Main.foo();
-        Another.init();
-    }
+	static native function init() {
+$data modify storage mcs:memory heap[$(this)] set from storage mcs:memory tmp
+	}
+
+	static native function free() {
+$data modify storage mcs:memory free append value $(id)
+	}
 }

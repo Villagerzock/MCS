@@ -12,6 +12,9 @@ public final class SemanticType {
 	public static final SemanticType BOOLEAN = new SemanticType("boolean", new BooleanLiteralExpression(false));
 	public static final SemanticType VOID = new SemanticType("function", new NullLiteralExpression());
 	public static final SemanticType REFERENCE = new SemanticType("pointer", new NumberLiteralExpression("0"));
+	public static final SemanticType TARGET = new SemanticType("Target", new SelectorExpression("@s"));
+	public static final SemanticType PLAYER_TARGET = new SemanticType("PlayerTarget", new SelectorExpression("@s"));
+	public static final SemanticType LOCATION = new SemanticType("Location", new StringLiteralExpression("~ ~ ~"));
 	public static final SemanticType ANY = new SemanticType("any", new NullLiteralExpression());
 	public static final SemanticType UNKNOWN = new SemanticType("<unknown>", new NullLiteralExpression());
 
@@ -89,6 +92,9 @@ public final class SemanticType {
 			case "bool", "boolean" -> BOOLEAN;
 			case "function", "void" -> VOID;
 			case "pointer" -> REFERENCE;
+			case "target" -> TARGET;
+			case "playertarget" -> PLAYER_TARGET;
+			case "location" -> LOCATION;
 			case "any" -> ANY;
 			default -> new SemanticType(trimmed,null,null,new NullLiteralExpression());
 		};
@@ -160,10 +166,20 @@ public final class SemanticType {
 			return true;
 		}
 		if (kind == Kind.ARRAY || kind == Kind.DICTIONARY) {
+			if (kind == Kind.ARRAY && isTargetLike(elementType) && isTargetLike(other)) {
+				return elementType.isAssignableFrom(other);
+			}
 			return kind == other.kind
 					&& elementType.isAssignableFrom(other.elementType);
 		}
+		if (this.equals(TARGET) && other.equals(PLAYER_TARGET)) {
+			return true;
+		}
 		return equals(other);
+	}
+
+	private static boolean isTargetLike(SemanticType type) {
+		return TARGET.equals(type) || PLAYER_TARGET.equals(type);
 	}
 
 	@Override

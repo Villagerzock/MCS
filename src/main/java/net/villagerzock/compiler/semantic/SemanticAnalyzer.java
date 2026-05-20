@@ -889,12 +889,22 @@ public final class SemanticAnalyzer {
 		return scope;
 	}
 
+	private Symbol thisSymbol(ClassInfo classInfo) {
+		return new Symbol(
+				"this",
+				createClassSemanticType(classInfo),
+				SymbolKind.LOCAL,
+				classInfo.declaration
+		);
+	}
+
 	private void checkConstructor(ConstructorSymbol constructor) {
 		currentMethod = null;
 		currentConstructor = constructor;
 		currentCallableName = currentClass.declaration.name();
 		currentReturnType = SemanticType.VOID;
 		currentScope = fieldScope(currentClass);
+		currentScope.define(thisSymbol(currentClass));
 
 		for (Symbol parameter : constructor.parameters()) {
 			currentScope.define(parameter);
@@ -932,6 +942,10 @@ public final class SemanticAnalyzer {
 		currentCallableName = method.name();
 		currentReturnType = method.returnType();
 		currentScope = fieldScope(currentClass);
+
+		if (!method.declaration().isStatic()) {
+			currentScope.define(thisSymbol(currentClass));
+		}
 
 		for (Symbol parameter : method.parameters()) {
 			currentScope.define(parameter);
@@ -1015,6 +1029,8 @@ public final class SemanticAnalyzer {
 			}
 		} else if (statement instanceof WhileStatement whileStatement) {
 			checkWhile(whileStatement);
+		} else if (statement instanceof WithStatement withStatement) {
+			checkWith(withStatement);
 		} else if (statement instanceof ForStatement forStatement) {
 			checkFor(forStatement);
 		} else if (statement instanceof ReturnStatement returnStatement) {
@@ -1039,6 +1055,62 @@ public final class SemanticAnalyzer {
 		}
 
 		checkStatement(statement.body());
+	}
+
+	private void checkWith(WithStatement statement) {
+		for (WithStatement.Part part : statement.parts()) {
+			String name = part.name();
+			WithStatement.Value value = part.value();
+
+			if (!name.equals("location") && !name.equals("target")) {
+				error(statement, "Unknown with context '" + name + "'.");
+				continue;
+			}
+
+			if (name.equals("target") && !(value instanceof WithStatement.SelectorValue)) {
+				error(statement, "With target must be a selector like '@s'.");
+				continue;
+			}
+
+			if (name.equals("location")) {
+				checkLocationWithValue(statement, value);
+			}
+		}
+
+		checkStatement(statement.body());
+	}
+
+	private void checkLocationWithValue(WithStatement statement, WithStatement.Value value) {
+		if (value instanceof WithStatement.SelectorValue) {
+			return;
+		}
+
+		if (value instanceof WithStatement.CoordinateValue coordinates) {
+			for (Expression coordinate : coordinates.coordinates()) {
+				checkExpression(coordinate);
+			}
+			return;
+		}
+
+		if (value instanceof WithStatement.CallValue call) {
+			if (!call.name().equals("relative") && !call.name().equals("relativeEye") && !call.name().equals("at")) {
+				error(statement, "Unknown location with value '" + call.name() + "'.");
+			}
+
+			if (call.name().equals("at")) {
+				if (call.arguments().size() != 1 || !(call.arguments().get(0) instanceof SelectorExpression)) {
+					error(statement, "location=at(...) expects a selector.");
+				}
+				return;
+			}
+
+			if (call.arguments().size() != 3) {
+				error(statement, "location=" + call.name() + "(...) expects three coordinates.");
+			}
+			for (Expression argument : call.arguments()) {
+				checkExpression(argument);
+			}
+		}
 	}
 
 	private void checkFor(ForStatement statement) {
@@ -1087,7 +1159,7 @@ public final class SemanticAnalyzer {
 		}
 
 		if (variable.initializer() != null) {
-			SemanticType initializerType = checkExpression(variable.initializer());
+			SemanticType initializerType = checkExpression(variable.initializer(), declaredType);
 
 			if (!declaredType.isAssignableFrom(initializerType)) {
 				error(
@@ -1111,7 +1183,7 @@ public final class SemanticAnalyzer {
 
 		SemanticType actual = statement.value() == null
 				? SemanticType.VOID
-				: checkExpression(statement.value());
+				: checkExpression(statement.value(), expected);
 
 		if (expected.isVoid() && statement.value() != null) {
 			error(statement, "Callable '" + callableName + "' does not return a value.");
@@ -1134,6 +1206,10 @@ public final class SemanticAnalyzer {
 	}
 
 	private SemanticType checkExpression(Expression expression) {
+		return checkExpression(expression, null);
+	}
+
+	private SemanticType checkExpression(Expression expression, SemanticType expectedType) {
 		if (expression == null) {
 			return SemanticType.VOID;
 		}
@@ -1142,6 +1218,8 @@ public final class SemanticAnalyzer {
 
 		if (expression instanceof NumberLiteralExpression) {
 			result = SemanticType.INT;
+		} else if (expression instanceof SelectorExpression selector) {
+			result = checkSelectorLiteral(selector, expectedType);
 		} else if (expression instanceof StringLiteralExpression) {
 			result = SemanticType.STRING;
 		} else if (expression instanceof TStringLiteralExpression string){
@@ -1176,7 +1254,11 @@ public final class SemanticAnalyzer {
 		} else if (expression instanceof UpdateExpression update) {
 			result = checkUpdate(update);
 		} else if (expression instanceof CallExpression call) {
-			result = checkCall(call);
+			if (isLocationLiteralCall(call)) {
+				result = checkLocationLiteralCall(call);
+			} else {
+				result = checkCall(call);
+			}
 		} else if (expression instanceof SelectExpression memberAccess) {
 			result = checkMemberAccess(memberAccess);
 		} else {
@@ -1184,8 +1266,104 @@ public final class SemanticAnalyzer {
 			result = SemanticType.UNKNOWN;
 		}
 
+		validateLiteralAgainstExpected(expression, expectedType);
 		expression.setResolvedType(result);
 		return result;
+	}
+
+	private SemanticType checkSelectorLiteral(SelectorExpression selector, SemanticType expectedType) {
+		SemanticType result = isPlayerSelector(selector.selector())
+				? SemanticType.PLAYER_TARGET
+				: SemanticType.TARGET;
+
+		return result;
+	}
+
+	private boolean isLocationLiteralCall(CallExpression call) {
+		if (!(call.callee() instanceof IdentifierExpression identifier)) {
+			return false;
+		}
+		return identifier.name().equals("relative") || identifier.name().equals("relativeEye");
+	}
+
+	private SemanticType checkLocationLiteralCall(CallExpression call) {
+		if (call.arguments().size() != 3) {
+			error(call, locationLiteralName(call) + "(...) expects three coordinates.");
+		}
+		for (Expression argument : call.arguments()) {
+			SemanticType type = checkExpression(argument);
+			if (!(argument instanceof NumberLiteralExpression)) {
+				error(argument, "Location literals currently require numeric literal coordinates.");
+			}
+			if (!SemanticType.INT.isAssignableFrom(type)) {
+				error(argument, "Location coordinate must be 'int', got '" + type + "'.");
+			}
+		}
+		return SemanticType.LOCATION;
+	}
+
+	private String locationLiteralName(CallExpression call) {
+		return call.callee() instanceof IdentifierExpression identifier ? identifier.name() : "<unknown>";
+	}
+
+	private void validateLiteralAgainstExpected(Expression expression, SemanticType expectedType) {
+		if (expression instanceof SelectorExpression selector && expectsTarget(expectedType)) {
+			checkSelectorMatchesExpected(selector, expectedType);
+			return;
+		}
+
+		if (expression instanceof ArrayLiteralExpression arrayLiteral
+				&& expectedType != null
+				&& expectedType.kind() == SemanticType.Kind.ARRAY) {
+			for (Expression value : arrayLiteral.values()) {
+				validateLiteralAgainstExpected(value, expectedType.elementType());
+			}
+		}
+	}
+
+	private boolean expectsTarget(SemanticType expectedType) {
+		if (expectedType == null) {
+			return false;
+		}
+		if (expectedType.equals(SemanticType.TARGET) || expectedType.equals(SemanticType.PLAYER_TARGET)) {
+			return true;
+		}
+		return expectedType.kind() == SemanticType.Kind.ARRAY
+				&& (expectedType.elementType().equals(SemanticType.TARGET)
+				|| expectedType.elementType().equals(SemanticType.PLAYER_TARGET));
+	}
+
+	private void checkSelectorMatchesExpected(SelectorExpression selector, SemanticType expectedType) {
+		boolean allowMultiple = expectedType.kind() == SemanticType.Kind.ARRAY;
+		SemanticType elementType = allowMultiple ? expectedType.elementType() : expectedType;
+		String raw = selector.selector();
+
+		if (elementType.equals(SemanticType.PLAYER_TARGET) && !isPlayerSelector(raw)) {
+			error(selector, "PlayerTarget requires a player selector, got '" + raw + "'.");
+		}
+
+		if (!allowMultiple && maySelectMultiple(raw) && !hasLimitOne(raw)) {
+			error(selector, "Target literal '" + raw + "' may select multiple entities; use limit=1 or Target[]/PlayerTarget[].");
+		}
+	}
+
+	private boolean isPlayerSelector(String selector) {
+		String base = selectorBase(selector);
+		return base.equals("@s") || base.equals("@p") || base.equals("@r") || base.equals("@a");
+	}
+
+	private boolean maySelectMultiple(String selector) {
+		String base = selectorBase(selector);
+		return base.equals("@a") || base.equals("@e");
+	}
+
+	private boolean hasLimitOne(String selector) {
+		return selector.matches(".*(?:^|[\\[,])\\s*limit\\s*=\\s*1\\s*(?:[,\\]]|$).*");
+	}
+
+	private String selectorBase(String selector) {
+		int bracket = selector.indexOf('[');
+		return bracket < 0 ? selector : selector.substring(0, bracket);
 	}
 
 	private SemanticType checkNewExpression(NewExpression expression) {
@@ -1211,6 +1389,10 @@ public final class SemanticAnalyzer {
 		}
 
 		expression.setResolvedConstructorSymbol(constructor);
+		int count = Math.min(constructor.parameters().size(), expression.arguments().size());
+		for (int i = 0; i < count; i++) {
+			validateLiteralAgainstExpected(expression.arguments().get(i), constructor.parameters().get(i).type());
+		}
 		return createClassSemanticType(classInfo);
 	}
 
@@ -1385,7 +1567,7 @@ public final class SemanticAnalyzer {
 		}
 
 		SemanticType targetType = checkExpression(assignment.target());
-		SemanticType valueType = checkExpression(assignment.value());
+		SemanticType valueType = checkExpression(assignment.value(), targetType);
 		markLocalVariableReassigned(assignment.target());
 
 		if (!targetType.isAssignableFrom(valueType)) {
@@ -1461,8 +1643,8 @@ public final class SemanticAnalyzer {
 		int count = Math.min(method.parameters().size(), call.arguments().size());
 
 		for (int i = 0; i < count; i++) {
-			SemanticType actual = checkExpression(call.arguments().get(i));
 			SemanticType expected = method.parameters().get(i).type();
+			SemanticType actual = checkExpression(call.arguments().get(i), expected);
 
 			if (!expected.isAssignableFrom(actual)) {
 				error(
@@ -1498,11 +1680,15 @@ public final class SemanticAnalyzer {
 			Node owner,
 			String context
 	) {
-		AnalyzedInlineText analyzed = analyzeInlineText(text, owner, context);
+		AnalyzedInlineText analyzed = analyzeInlineText(text, owner, context, true);
 		target.setAnalyzedNative(analyzed.text(), analyzed.expressions());
 	}
 
 	private AnalyzedInlineText analyzeInlineText(String text, Node owner, String context) {
+		return analyzeInlineText(text, owner, context, false);
+	}
+
+	private AnalyzedInlineText analyzeInlineText(String text, Node owner, String context, boolean allowNativeStatementCalls) {
 		if (text == null || text.isEmpty()) {
 			return new AnalyzedInlineText("", List.of());
 		}
@@ -1519,7 +1705,7 @@ public final class SemanticAnalyzer {
 			Expression expression = parseInlineExpression(source, owner, context);
 			if (expression != null) {
 				SemanticType type = checkExpression(expression);
-				if (type != null && type.isVoid()) {
+				if (type != null && type.isVoid() && !isNativeStatementCall(text, matcher, expression, allowNativeStatementCalls)) {
 					error(owner, "Inline expression '${" + source + "}' in " + context + " cannot be 'function'.");
 				}
 
@@ -1538,6 +1724,20 @@ public final class SemanticAnalyzer {
 
 		analyzedText.append(escapePercentMarkers(text.substring(cursor)));
 		return new AnalyzedInlineText(analyzedText.toString(), expressions);
+	}
+
+	private boolean isNativeStatementCall(String text, Matcher matcher, Expression expression, boolean allowNativeStatementCalls) {
+		if (!allowNativeStatementCalls || !(expression instanceof CallExpression)) {
+			return false;
+		}
+
+		int lineStart = text.lastIndexOf('\n', matcher.start());
+		lineStart = lineStart < 0 ? 0 : lineStart + 1;
+
+		int lineEnd = text.indexOf('\n', matcher.end());
+		lineEnd = lineEnd < 0 ? text.length() : lineEnd;
+
+		return text.substring(lineStart, lineEnd).trim().equals(matcher.group());
 	}
 
 	private String escapePercentMarkers(String text) {
@@ -1832,6 +2032,9 @@ public final class SemanticAnalyzer {
 		if (type.equals(SemanticType.INT)
 				|| type.equals(SemanticType.STRING)
 				|| type.equals(SemanticType.BOOLEAN)
+				|| type.equals(SemanticType.TARGET)
+				|| type.equals(SemanticType.PLAYER_TARGET)
+				|| type.equals(SemanticType.LOCATION)
 				|| type.equals(SemanticType.VOID)
 				|| type.equals(SemanticType.ANY)) {
 			return;

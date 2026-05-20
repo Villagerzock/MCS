@@ -20,6 +20,11 @@ public final class ExecuteCall implements ICommandPart {
         return this;
     }
 
+    public ExecuteCall addSubcommand(String subcommand) {
+        subcommands.add(subcommand);
+        return this;
+    }
+
     public ExecuteCall addStore(IStoreAction store) {
         subcommands.add("store result " + store.applyStoreAction());
         return this;

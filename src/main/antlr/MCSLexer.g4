@@ -58,6 +58,7 @@ RPAREN
 	;
 FOR : 'for';
 WHILE : 'while';
+WITH : 'with';
 
 PLUS_PLUS : '++';
 MINUS_MINUS : '--';
@@ -80,6 +81,7 @@ STAR : '*';
 LT : '<';
 GT : '>';
 EXCLAMATION : '!';
+RANGE : '..';
 LOGICAL_OR : '||';
 LOGICAL_AND : '&&';
 EQUAL_EQUAL : '==';

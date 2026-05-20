@@ -40,7 +40,17 @@ public class LibGenerator {
     }
     private void addClass(ClassDeclaration declaration, JsonObject json){
         json.addProperty("name", declaration.name());
-        json.addProperty("kind", "class");
+        json.addProperty("kind", declaration instanceof RecordDeclaration ? "record" : "class");
+        if (declaration instanceof RecordDeclaration recordDeclaration) {
+            JsonArray components = new JsonArray();
+            for (ParameterDeclaration component : recordDeclaration.components()) {
+                JsonObject componentObj = new JsonObject();
+                componentObj.addProperty("name", component.name());
+                componentObj.addProperty("type", component.type().resolvedType().getCanonnicalName());
+                components.add(componentObj);
+            }
+            json.add("components", components);
+        }
         JsonArray members = new JsonArray();
         for (Declaration member : declaration.members()){
             JsonObject memberObj = new JsonObject();
@@ -56,6 +66,14 @@ public class LibGenerator {
         }
         if (decl instanceof MethodDeclaration methodDeclaration){
             addMethod(methodDeclaration,json);
+            return;
+        }
+        if (decl instanceof ConstructorDeclaration constructorDeclaration){
+            addConstructor(constructorDeclaration, json);
+            return;
+        }
+        if (decl instanceof FieldDeclaration fieldDeclaration){
+            addField(fieldDeclaration, json);
         }
     }
 
@@ -71,5 +89,34 @@ public class LibGenerator {
             parameters.add(param);
         }
         json.add("parameters",parameters);
+    }
+
+    private void addConstructor(ConstructorDeclaration constructorDeclaration, JsonObject json) {
+        json.addProperty("kind", "constructor");
+        if (constructorDeclaration.getFunction() != null) {
+            json.addProperty("ref", constructorDeclaration.getFunction().getFullPath());
+        }
+
+        JsonArray parameters = new JsonArray();
+        for (ParameterDeclaration parameter : constructorDeclaration.parameters()){
+            JsonObject param = new JsonObject();
+            param.addProperty("name", parameter.name());
+            param.addProperty("type", parameter.type().resolvedType().getCanonnicalName());
+            parameters.add(param);
+        }
+        json.add("parameters",parameters);
+    }
+
+    private void addField(FieldDeclaration fieldDeclaration, JsonObject json) {
+        json.addProperty("name", fieldDeclaration.name());
+        json.addProperty("kind", "field");
+        json.addProperty("type", fieldDeclaration.type().resolvedType().getCanonnicalName());
+
+        if (fieldDeclaration.getGetter() != null) {
+            json.addProperty("getter", fieldDeclaration.getGetter().getFullPath());
+        }
+        if (fieldDeclaration.getSetter() != null) {
+            json.addProperty("setter", fieldDeclaration.getSetter().getFullPath());
+        }
     }
 }

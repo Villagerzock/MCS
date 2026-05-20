@@ -83,11 +83,6 @@ public class Generator {
                 methodDeclaration.nativeBody().setAssociatedFunction(function);
             } else {
                 MCFunction function = unit.create(namespace, pathStack.getPath(), methodDeclaration.name() + "_entry");
-
-                if (!isStaticDeclaration(methodDeclaration)) {
-                    function.setUsesMacros(true);
-                }
-
                 methodDeclaration.body().setAssociatedFunction(function);
             }
         }
@@ -120,10 +115,14 @@ public class Generator {
 
         if (decl instanceof ConstructorDeclaration constructorDeclaration){
             MCFunction function = unit.create(namespace, pathStack.getPath(),  "ctor");
-            function.setUsesMacros(true);
             constructorDeclaration.body().setAssociatedFunction(function);
             MCFunction init = containingClass.getInit(() -> null);
             if (init != null){
+                function.setUsesMacros(true);
+                constructorDeclaration.getFunction().addCommand(new DataToData(
+                        macroPath("this"),
+                        "storage mcs:memory tmp_macro.this"
+                ));
                 constructorDeclaration.getFunction().addCommand(new FunctionCall(init, 2));
             }
         }
@@ -184,69 +183,93 @@ public class Generator {
         String[] lines = nativeBody.getAnalyzedCode().split("\n");
         Pattern pattern = Pattern.compile("(?<!\\\\)%([0-9]+)%");
 
-        boolean useNewFunction = false;
-        int macroCount = 0;
-
-        Map<Integer, String> expressionToMacroMap = new HashMap<>();
-
         for (int i = 0; i < lines.length; i++) {
-            Matcher matcher = pattern.matcher(lines[i]);
+            String line = lines[i];
+            Matcher matcher = pattern.matcher(line);
+
+            if (matcher.matches()) {
+                int expressionIndex = Integer.parseInt(matcher.group(1));
+                Expression expression = nativeBody.inlineExpressions().get(expressionIndex);
+
+                if (expression instanceof CallExpression callExpression) {
+                    function.addCommand(generateCallStatement(
+                            callExpression,
+                            unit,
+                            function,
+                            pathStack,
+                            baseName + "_native_call_" + i
+                    ));
+                    continue;
+                }
+            }
+            matcher.reset();
+
+            Map<Integer, String> expressionToMacroMap = new HashMap<>();
+            List<ICommandPart> macroCommands = new ArrayList<>();
+            int macroCount = 0;
 
             while (matcher.find()) {
                 int expressionIndex = Integer.parseInt(matcher.group(1));
 
                 if (expressionToMacroMap.containsKey(expressionIndex)) {
-                    lines[i] = lines[i].replace(
+                    line = line.replace(
                             "%%%s%%".formatted(expressionIndex),
                             "$(%s)".formatted(expressionToMacroMap.get(expressionIndex))
                     );
-
-                    if (!lines[i].startsWith("$")) {
-                        lines[i] = "$%s".formatted(lines[i]);
-                    }
-
                     continue;
                 }
-
-                useNewFunction = true;
 
                 Expression expr = nativeBody.inlineExpressions().get(expressionIndex);
 
                 String macroName = "m_%s".formatted(macroCount++);
 
-                function.addCommand(generateExpression(
+                macroCommands.add(generateExpression(
                         expr,
                         unit,
                         function,
                         pathStack,
-                        new DataValueTarget("storage mcs:memory stack[0].macro." + macroName),
-                        baseName + "_macro_" + macroName
+                        new DataValueTarget("storage mcs:memory tmp_macro." + macroName),
+                        baseName + "_macro_" + i + "_" + macroName
                 ));
 
-                lines[i] = lines[i].replace(
+                line = line.replace(
                         "%%%s%%".formatted(expressionIndex),
                         "$(%s)".formatted(macroName)
                 );
 
                 expressionToMacroMap.put(expressionIndex, macroName);
-
-                if (!lines[i].startsWith("$")) {
-                    lines[i] = "$%s".formatted(lines[i]);
-                }
             }
 
-            lines[i] = lines[i].replace("\\%", "%");
+            line = line.replace("\\%", "%");
+
+            if (!macroCommands.isEmpty()) {
+                if (!line.startsWith("$") || line.startsWith("$(")) {
+                    line = "$%s".formatted(line);
+                }
+
+                MCFunction commandFunction = unit.create(namespace, pathStack.getPath(), baseName + "_native");
+                commandFunction.setUsesMacros(true);
+                commandFunction.addCommand(new NativePart(line));
+
+                function.addCommand(new DataToData(
+                        "storage mcs:memory stack[0].macro",
+                        "storage mcs:memory tmp_macro"
+                ));
+
+                for (ICommandPart macroCommand : macroCommands) {
+                    function.addCommand(macroCommand);
+                }
+
+                function.addCommand(new FunctionCall(commandFunction, 2));
+                continue;
+            }
+
+            if (line.contains("$(")) {
+                function.setUsesMacros(true);
+            }
+
+            function.addCommand(new NativePart(line));
         }
-
-        MCFunction functionWrite = function;
-
-        if (useNewFunction) {
-            function.setUsesMacros(true);
-            functionWrite = unit.create(namespace, pathStack.getPath(), baseName + "_native");
-            function.addCommand(new FunctionCall(functionWrite));
-        }
-
-        functionWrite.addCommand(new NativePart(String.join("\n", lines)));
     }
 
     private void generateBlock(BlockStatement stmt, MCFunctionUnit unit, MCFunction function, PathStack pathStack, String baseName) {
@@ -487,6 +510,23 @@ public class Generator {
             }
         }
 
+        if (statement instanceof WithStatement withStatement) {
+            MCFunction withFunction = unit.create(function.getNamespace(), function.getPath(), baseName + "_with");
+            if (withStatement.body() instanceof BlockStatement blockStatement) {
+                blockStatement.setAssociatedFunction(withFunction);
+                generateBlock(blockStatement, unit, withFunction, pathStack, baseName);
+            } else {
+                generateStatement(withStatement.body(), unit, withFunction, pathStack, baseName);
+            }
+
+            ExecuteCall executeCall = new ExecuteCall(new FunctionCall(withFunction, 1));
+            for (WithStatement.Part part : withStatement.parts()) {
+                executeCall.addSubcommand(withSubcommand(part));
+            }
+            function.addCommand(executeCall);
+            return;
+        }
+
         if (statement instanceof ForStatement forStatement) {
             Statement body = forStatement.body();
 
@@ -551,6 +591,77 @@ public class Generator {
         }
     }
 
+    private String withSubcommand(WithStatement.Part part) {
+        WithStatement.Value value = part.value();
+
+        if (part.name().equals("target") && value instanceof WithStatement.SelectorValue selector) {
+            return "as " + selector.selector();
+        }
+
+        if (part.name().equals("location")) {
+            if (value instanceof WithStatement.SelectorValue selector) {
+                return "at " + selector.selector();
+            }
+
+            if (value instanceof WithStatement.CoordinateValue coordinates) {
+                return "positioned " + coordinateTriplet(coordinates.coordinates(), "");
+            }
+
+            if (value instanceof WithStatement.CallValue call) {
+                if (call.name().equals("at") && call.arguments().get(0) instanceof SelectorExpression selector) {
+                    return "at " + selector.selector();
+                }
+                if (call.name().equals("relative")) {
+                    return "positioned " + coordinateTriplet(call.arguments(), "~");
+                }
+                if (call.name().equals("relativeEye")) {
+                    return "anchored eyes positioned " + coordinateTriplet(call.arguments(), "^");
+                }
+            }
+        }
+
+        throw new IllegalStateException("Unsupported with part: " + part.name());
+    }
+
+    private String coordinateTriplet(List<Expression> coordinates, String prefix) {
+        if (coordinates.size() != 3) {
+            throw new IllegalStateException("Expected three coordinates.");
+        }
+
+        return "%s %s %s".formatted(
+                coordinate(coordinates.get(0), prefix),
+                coordinate(coordinates.get(1), prefix),
+                coordinate(coordinates.get(2), prefix)
+        );
+    }
+
+    private String coordinate(Expression expression, String prefix) {
+        if (expression instanceof NumberLiteralExpression number) {
+            if (!prefix.isEmpty() && number.rawValue().equals("0")) {
+                return prefix;
+            }
+            return prefix + number.rawValue();
+        }
+
+        throw new IllegalStateException("With coordinates currently require number literals.");
+    }
+
+    private String locationLiteralString(Expression expression) {
+        if (!(expression instanceof CallExpression call) || !(call.callee() instanceof IdentifierExpression identifier)) {
+            return null;
+        }
+
+        if (identifier.name().equals("relative")) {
+            return coordinateTriplet(call.arguments(), "~");
+        }
+
+        if (identifier.name().equals("relativeEye")) {
+            return coordinateTriplet(call.arguments(), "^");
+        }
+
+        return null;
+    }
+
     private ICommandPart generateCallStatement(
             CallExpression callExpression,
             MCFunctionUnit unit,
@@ -559,6 +670,23 @@ public class Generator {
             String baseName
     ) {
         MethodSymbol method = callExpression.resolvedMethod();
+        List<ICommandPart> commands = buildCallSetup(callExpression, method, unit, function, pathStack, baseName);
+
+        commands.add(new CreateStackFrame());
+        commands.add(new FunctionCall(method.declaration().getFunction()));
+        commands.add(new PopStackFrame());
+
+        return new MultiPart(commands);
+    }
+
+    private List<ICommandPart> buildCallSetup(
+            CallExpression callExpression,
+            MethodSymbol method,
+            MCFunctionUnit unit,
+            MCFunction function,
+            PathStack pathStack,
+            String baseName
+    ) {
         SnbtCompound locals = compound();
         SnbtCompound macro = compound();
 
@@ -606,11 +734,7 @@ public class Generator {
             ));
         }
 
-        commands.add(new CreateStackFrame());
-        commands.add(new FunctionCall(method.declaration().getFunction()));
-        commands.add(new PopStackFrame());
-
-        return new MultiPart(commands);
+        return commands;
     }
 
     private record DelayedParam(String name, Expression expression) {
@@ -631,6 +755,17 @@ public class Generator {
         if (param instanceof TStringLiteralExpression string
                 && (string.inlineExpressions().isEmpty() || findMarker(string.analyzedText(), 0) == null)) {
             locals.putString(name, string.analyzedText().replace("\\%", "%"));
+            return true;
+        }
+
+        if (param instanceof SelectorExpression selector) {
+            locals.putString(name, selector.selector());
+            return true;
+        }
+
+        String locationLiteral = locationLiteralString(param);
+        if (locationLiteral != null) {
+            locals.putString(name, locationLiteral);
             return true;
         }
 
@@ -750,6 +885,7 @@ public class Generator {
                     function.getPath(),
                     baseName + "_tstr"
             );
+            macroFunction.setUsesMacros(true);
 
             ICommandPart writeResult = target.storeFrom(
                     new StringValueTarget(result)
@@ -764,6 +900,15 @@ public class Generator {
             return target.storeFrom(new StringValueTarget(string.rawValue()));
         }
 
+        if (expression instanceof SelectorExpression selector) {
+            return target.storeFrom(new StringValueTarget(selector.selector()));
+        }
+
+        String locationLiteral = locationLiteralString(expression);
+        if (locationLiteral != null) {
+            return target.storeFrom(new StringValueTarget(locationLiteral));
+        }
+
         if (expression instanceof ArrayLiteralExpression arrayLiteral) {
             return generateNbtLiteralExpression(arrayLiteral, unit, function, pathStack, target, baseName);
         }
@@ -774,7 +919,6 @@ public class Generator {
 
         if (expression instanceof IdentifierExpression identifier) {
             if (identifier.name().equals("this")) {
-                function.setUsesMacros(true);
                 return target.storeFrom(new DataValueTarget(macroPath("this")));
             }
 
@@ -957,6 +1101,15 @@ public class Generator {
             return string(string.rawValue());
         }
 
+        if (expression instanceof SelectorExpression selector) {
+            return string(selector.selector());
+        }
+
+        String locationLiteral = locationLiteralString(expression);
+        if (locationLiteral != null) {
+            return string(locationLiteral);
+        }
+
         if (expression instanceof BooleanLiteralExpression bool) {
             return bool(bool.value());
         }
@@ -1102,7 +1255,6 @@ public class Generator {
         Expression ownerExpression = ownerExpressionOf(fieldExpression);
 
         if (ownerExpression == null) {
-            function.setUsesMacros(true);
             return new DataToData(
                     macroPath("this"),
                     targetPath
@@ -1333,13 +1485,11 @@ public class Generator {
     ) {
         Expression receiver = receiverExpressionOfCall(callExpression);
 
-        if (receiver == null && isStaticDeclaration(methodDeclaration)) {
+        if (isStaticDeclaration(methodDeclaration)) {
             return;
         }
 
         if (receiver == null) {
-            function.setUsesMacros(true);
-
             commands.add(new DataToData(
                     macroPath("this"),
                     "storage mcs:memory tmp.macro.this"
@@ -1348,8 +1498,6 @@ public class Generator {
         }
 
         if (isThisExpression(receiver)) {
-            function.setUsesMacros(true);
-
             commands.add(new DataToData(
                     macroPath("this"),
                     "storage mcs:memory tmp.macro.this"
@@ -1460,52 +1608,7 @@ public class Generator {
             String baseName
     ) {
         MethodSymbol method = callExpression.resolvedMethod();
-        SnbtCompound locals = compound();
-        SnbtCompound macro = compound();
-
-        List<DelayedParam> delayedParams = new ArrayList<>();
-
-        for (int i = 0; i < callExpression.arguments().size(); i++) {
-            Expression param = callExpression.arguments().get(i);
-            String name = method.declaration().parameters().get(i).name();
-
-            if (param instanceof NullLiteralExpression){
-                continue;
-            }
-
-            if (!putImmediateParam(locals, name, param)) {
-                delayedParams.add(new DelayedParam(name, param));
-            }
-        }
-
-        SnbtCompound frame = compound()
-                .put("locals", locals)
-                .put("macro", macro);
-
-        List<ICommandPart> commands = new ArrayList<>();
-
-        commands.add(new TmpWrite(frame.toSnbt()));
-
-        writeThisMacroForMethodCall(
-                callExpression,
-                method.declaration(),
-                unit,
-                function,
-                pathStack,
-                commands,
-                baseName + "_this"
-        );
-
-        for (DelayedParam delayed : delayedParams) {
-            commands.add(generateExpression(
-                    delayed.expression(),
-                    unit,
-                    function,
-                    pathStack,
-                    new DataValueTarget("storage mcs:memory tmp.locals." + delayed.name()),
-                    baseName + "_param_" + delayed.name()
-            ));
-        }
+        List<ICommandPart> commands = buildCallSetup(callExpression, method, unit, function, pathStack, baseName);
 
         commands.add(new CreateStackFrame());
         commands.add(new ExecuteStoreResultScore(baseName, new FunctionCall(method.declaration().getFunction())));

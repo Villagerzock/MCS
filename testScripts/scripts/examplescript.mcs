@@ -11,8 +11,6 @@ class Main {
     record ARecord(string something){
     }
     static Test foo() {
-        summon("breeze_wind_charge","~ ~ ~","");
-        summon("breeze_wind_charge","~ ~ ~","");
         for (int i = 0; i< 10; i++){
             print($"Hi i is ${i}");
         }
@@ -20,7 +18,9 @@ class Main {
         any var = "Hi";
         Test test = new Test("Some Field");
         ARecord testRecord = new ARecord("something");
-
+        with(location=(0,0,0), target=@a[distance=..4]){
+            tp(@s, relative(0, 0, 0));
+        }
         print(test.field);
         return test;
     }

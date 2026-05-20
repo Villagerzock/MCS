@@ -4,6 +4,7 @@ import com.google.gson.*;
 import net.villagerzock.compiler.ast.AstBuilder;
 import net.villagerzock.compiler.ast.CompilationUnit;
 import net.villagerzock.compiler.ast.decl.*;
+import net.villagerzock.compiler.ast.stmt.BlockStatement;
 import net.villagerzock.compiler.ast.type.TypeNode;
 import net.villagerzock.compiler.gen.Generator;
 import net.villagerzock.compiler.gen.LibGenerator;
@@ -356,8 +357,20 @@ public class Main {
             return loadClassFromJson(decl);
         }
 
+        if (Objects.equals(kind, "record")) {
+            return loadRecordFromJson(decl);
+        }
+
         if (Objects.equals(kind, "method")) {
             return loadMethodFromJson(decl);
+        }
+
+        if (Objects.equals(kind, "constructor")) {
+            return loadConstructorFromJson(decl);
+        }
+
+        if (Objects.equals(kind, "field")) {
+            return loadFieldFromJson(decl);
         }
 
         return null;
@@ -383,6 +396,38 @@ public class Main {
         return new ClassDeclaration(name, declarationList);
     }
 
+    private static RecordDeclaration loadRecordFromJson(JsonObject clazz) {
+        String name = clazz.get("name").getAsString();
+        JsonArray componentsJson = clazz.getAsJsonArray("components");
+        JsonArray members = clazz.getAsJsonArray("members");
+
+        List<ParameterDeclaration> components = new ArrayList<>();
+        List<Declaration> declarationList = new ArrayList<>();
+
+        if (componentsJson != null) {
+            for (JsonElement component : componentsJson) {
+                JsonObject obj = component.getAsJsonObject();
+                components.add(new ParameterDeclaration(
+                        new TypeNode(obj.get("type").getAsString()),
+                        obj.get("name").getAsString()
+                ));
+            }
+        }
+
+        if (members != null) {
+            for (JsonElement member : members) {
+                JsonObject obj = member.getAsJsonObject();
+                Declaration declaration = loadDeclarationFromJson(obj);
+
+                if (declaration != null) {
+                    declarationList.add(declaration);
+                }
+            }
+        }
+
+        return new RecordDeclaration(name, components, declarationList);
+    }
+
     private static MethodDeclaration loadMethodFromJson(JsonObject clazz) {
         String name = clazz.get("name").getAsString();
         String ref = clazz.get("ref").getAsString();
@@ -402,6 +447,44 @@ public class Main {
         }
 
         return new LightMethodDeclaration(new TypeNode("function"), name, declarationList, new LightMCFunction(ref));
+    }
+
+    private static ConstructorDeclaration loadConstructorFromJson(JsonObject clazz) {
+        JsonArray members = clazz.getAsJsonArray("parameters");
+        List<ParameterDeclaration> declarationList = new ArrayList<>();
+
+        if (members != null) {
+            for (JsonElement member : members) {
+                JsonObject obj = member.getAsJsonObject();
+                declarationList.add(new ParameterDeclaration(
+                        new TypeNode(obj.get("type").getAsString()),
+                        obj.get("name").getAsString()
+                ));
+            }
+        }
+
+        BlockStatement body = new BlockStatement(List.of());
+        if (clazz.has("ref")) {
+            body.setAssociatedFunction(new LightMCFunction(clazz.get("ref").getAsString()));
+        }
+        return new ConstructorDeclaration(declarationList, body);
+    }
+
+    private static FieldDeclaration loadFieldFromJson(JsonObject clazz) {
+        FieldDeclaration field = new FieldDeclaration(
+                new TypeNode(clazz.get("type").getAsString()),
+                clazz.get("name").getAsString(),
+                null
+        );
+
+        if (clazz.has("getter")) {
+            field.setGetter(new LightMCFunction(clazz.get("getter").getAsString()));
+        }
+        if (clazz.has("setter")) {
+            field.setSetter(new LightMCFunction(clazz.get("setter").getAsString()));
+        }
+
+        return field;
     }
 
     private static boolean isZip(File file) {
